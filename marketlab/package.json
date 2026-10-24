@@ -1,0 +1,39 @@
+{
+  "name": "marketlab",
+  "version": "1.0.0",
+  "description": "MarketLab - Full-Stack Stock Market Trading Platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "stock",
+    "trading",
+    "financial",
+    "convex",
+    "react"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@expo/vector-icons": "^14.0.0",
+    "@react-navigation/native": "^7.5.1",
+    "@react-navigation/native-stack": "^7.21.0",
+    "@tanstack/react-query": "^5.104.5",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "expo": "^52.0.34",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-native": "^0.76.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "typescript": "^5.5.0",
+    "vite": "^6.0.0"
+  }
+}
