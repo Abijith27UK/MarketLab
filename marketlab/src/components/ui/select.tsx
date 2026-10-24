@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 interface SelectOption {
   value: string;
@@ -22,8 +22,17 @@ export const Select = ({
   disabled = false, 
   className = "" 
 }: SelectProps) => {
-  const [selectedValue, setSelectedValue] = useState(value || options[0]?.value);
+  const [selectedValue, setSelectedValue] = useState(value ?? "");
   const [isOpen, setIsOpen] = useState(false);
+
+  // Keep the internal selection in sync when the parent controls `value`.
+  useEffect(() => {
+    setSelectedValue(value ?? "");
+  }, [value]);
+
+  const selectedLabel =
+    options.find((option) => option.value === selectedValue)?.label ??
+    (selectedValue || placeholder);
 
   const handleSelect = (option: SelectOption) => {
     setSelectedValue(option.value);
@@ -42,7 +51,7 @@ export const Select = ({
           focus:ring-green-500 focus:border-green-500 ${className}
         `}
       >
-        {selectedValue || placeholder}
+        {selectedLabel}
       </button>
 
       {isOpen && !disabled && (

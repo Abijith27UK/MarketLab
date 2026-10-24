@@ -1,5 +1,6 @@
 import { useState } from "react";
 import "./styles/globals.css";
+import { RootProvider } from "./context/RootContext";
 import Dashboard from "./pages/Dashboard";
 import Markets from "./pages/Markets";
 import Watchlists from "./pages/Watchlists";
@@ -38,61 +39,63 @@ export default function App() {
   };
 
   return (
-    <div className="ml-shell">
-      <button
-        className="ml-menu-toggle"
-        aria-label={navOpen ? "Close navigation" : "Open navigation"}
-        aria-expanded={navOpen}
-        onClick={() => setNavOpen((v) => !v)}
-      >
-        ☰
-      </button>
-
-      <aside className={`ml-sidebar${navOpen ? " is-open" : ""}`}>
-        <div className="ml-brand">
-          <span className="ml-brand-mark">◆</span>
-          <span className="ml-brand-name">MarketLab</span>
-        </div>
-
-        <nav aria-label="Main navigation">
-          <ul className="ml-nav">
-            {NAV.map((item) => (
-              <li key={item.id}>
-                <button
-                  className={`ml-nav-item${page === item.id ? " is-active" : ""}`}
-                  aria-current={page === item.id ? "page" : undefined}
-                  onClick={() => {
-                    setPage(item.id);
-                    setNavOpen(false);
-                  }}
-                >
-                  <span className="ml-nav-label">{item.label}</span>
-                  <span className="ml-nav-hint">{item.hint}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-
-        <div className="ml-sidebar-footer">
-          <span className="ml-badge">Paper trading</span>
-          <p className="ml-disclaimer">
-            Simulated orders only. Live trading disabled until a broker is connected.
-          </p>
-        </div>
-      </aside>
-
-      {navOpen && (
+    <RootProvider>
+      <div className="ml-shell">
         <button
-          className="ml-scrim"
-          aria-label="Close navigation"
-          onClick={() => setNavOpen(false)}
-        />
-      )}
+          className="ml-menu-toggle"
+          aria-label={navOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={navOpen}
+          onClick={() => setNavOpen((v) => !v)}
+        >
+          ☰
+        </button>
 
-      <main className="ml-main" id="main-content">
-        {renderPage()}
-      </main>
-    </div>
+        <aside className={`ml-sidebar${navOpen ? " is-open" : ""}`}>
+          <div className="ml-brand">
+            <span className="ml-brand-mark">◆</span>
+            <span className="ml-brand-name">MarketLab</span>
+          </div>
+
+          <nav aria-label="Main navigation">
+            <ul className="ml-nav">
+              {NAV.map((item) => (
+                <li key={item.id}>
+                  <button
+                    className={`ml-nav-item${page === item.id ? " is-active" : ""}`}
+                    aria-current={page === item.id ? "page" : undefined}
+                    onClick={() => {
+                      setPage(item.id);
+                      setNavOpen(false);
+                    }}
+                  >
+                    <span className="ml-nav-label">{item.label}</span>
+                    <span className="ml-nav-hint">{item.hint}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
+
+          <div className="ml-sidebar-footer">
+            <span className="ml-badge">Paper trading</span>
+            <p className="ml-disclaimer">
+              Simulated orders only. Live trading disabled until a broker is connected.
+            </p>
+          </div>
+        </aside>
+
+        {navOpen && (
+          <button
+            className="ml-scrim"
+            aria-label="Close navigation"
+            onClick={() => setNavOpen(false)}
+          />
+        )}
+
+        <main className="ml-main" id="main-content">
+          {renderPage()}
+        </main>
+      </div>
+    </RootProvider>
   );
 }

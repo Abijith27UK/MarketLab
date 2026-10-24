@@ -6,9 +6,13 @@ export default defineConfig({
   plugins: [react()],
   base: "./",
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "src"),
-    },
+    alias: [
+      {
+        find: "@/convex/_generated",
+        replacement: path.resolve(__dirname, "convex/_generated"),
+      },
+      { find: "@", replacement: path.resolve(__dirname, "src") },
+    ],
   },
   build: {
     outDir: "dist",

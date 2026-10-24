@@ -1,287 +1,102 @@
-// Convex schema definitions for MarketLab
-// This file defines the data model used by the Convex backend
+import { defineSchema, defineTable } from "convex/server";
+import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
-// User preferences and profile
-export const userPreferences = {
-  userId: "string",
-  theme: "light" | "dark" | "system",
-  currency: "string",
-  timezone: "string",
-  defaultTradingMode: "paper" | "live",
-  defaultOrderSettings: {
-    productType: "string",
-    duration: "string",
-    autoSquareOff: boolean,
-  },
-  watchlistPreferences: {
-    defaultView: "string",
-    autoRefresh: boolean,
-  },
-  notificationPreferences: {
-    emailNotifications: boolean,
-    priceAlerts: boolean,
-    weeklyDigest: boolean,
-  },
-  createdAt: number,
-  updatedAt: number,
-};
+export default defineSchema({
+  // Convex Auth built-in tables (accounts, sessions, users)
+  ...authTables,
 
-// Instruments/market instruments
-export const instruments = {
-  instrumentId: "string",
-  symbol: "string",
-  name: "string",
-  exchange: "string",
-  instrumentType: "string",
-  segment: "string",
-  sector: "string",
-  industry: "string",
-  lotSize: number,
-  tickSize: number,
-  expiry: "number | null",
-  strikePrice: "number | null",
-  underlyingInstrumentId: "string | null",
-  listingStatus: "string",
-  currency: "string",
-  isActive: boolean,
-  isIndex: boolean,
-  marketCap: "number | null",
-  lastUpdated: number,
-};
+  // Per-user profile and preferences. Owner derived from auth, not client input.
+  userProfiles: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    theme: v.union(v.literal("light"), v.literal("dark"), v.literal("system")),
+    currency: v.string(),
+    timezone: v.string(),
+    defaultTradingMode: v.union(v.literal("paper"), v.literal("live")),
+    defaultOrderSettings: v.object({
+      productType: v.string(),
+      duration: v.string(),
+      autoSquareOff: v.boolean(),
+    }),
+    notificationPreferences: v.object({
+      emailNotifications: v.boolean(),
+      priceAlerts: v.boolean(),
+      weeklyDigest: v.boolean(),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 
-// Watchlists
-export const watchlists = {
-  userId: "string",
-  name: "string",
-  description: "string",
-  isDefault: boolean,
-  isPublic: boolean,
-  createdAt: number,
-  updatedAt: number,
-};
+  // Watchlists owned by a user
+  watchlists: defineTable({
+    userId: v.id("users"),
+    name: v.string(),
+    description: v.string(),
+    position: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_name", ["userId", "name"]),
 
-export const watchlistItems = {
-  watchlistId: "string",
-  instrumentId: "string",
-  position: number,
-};
+  // Watchlist items: a watchlist contains instrument symbols (denormalized owner for fast auth checks)
+  watchlistItems: defineTable({
+    watchlistId: v.id("watchlists"),
+    userId: v.id("users"),
+    instrumentId: v.string(),
+    position: v.number(),
+    addedAt: v.number(),
+  })
+    .index("by_watchlist", ["watchlistId"])
+    .index("by_user", ["userId"])
+    .index("by_watchlist_instrument", ["watchlistId", "instrumentId"]),
 
-// Trading accounts
-export const tradingAccounts = {
-  userId: "string",
-  brokerName: "string",
-  accountId: "string",
-  accountName: "string",
-  isPaper: boolean,
-  status: "string",
-  createdAt: number,
-  updatedAt: number,
-};
+  // Demonstration instrument catalogue (NOT live market data)
+  instruments: defineTable({
+    symbol: v.string(),
+    name: v.string(),
+    exchange: v.union(v.literal("NSE"), v.literal("BSE")),
+    instrumentType: v.union(v.literal("EQUITY"), v.literal("ETF"), v.literal("INDEX")),
+    sector: v.string(),
+    dataSource: v.string(),
+    isSampleData: v.boolean(),
+    lastUpdated: v.number(),
+  })
+    .index("by_symbol", ["symbol"])
+    .index("by_exchange", ["exchange"]),
 
-// Orders
-export const orders = {
-  userId: "string",
-  orderId: "string",
-  instrumentId: "string",
-  side: "BUY" | "SELL",
-  orderType: "MARKET" | "LIMIT" | "STOP_LOSS" | "STOP_LIMIT",
-  quantity: number,
-  price: "number | null",
-  triggerPrice: "number | null",
-  status: "PENDING" | "SUBMITTED" | "FILLED" | "CANCELLED" | "REJECTED",
-  averagePrice: "number | null",
-  filledQuantity: number,
-  totalQuantity: number,
-  placeholderOrderId: "string",
-  createdAt: number,
-  updatedAt: number,
-};
+  // Per-user simulated paper trading account (no execution engine in this phase)
+  paperAccounts: defineTable({
+    userId: v.id("users"),
+    startingCapital: v.number(),
+    availableCash: v.number(),
+    currency: v.string(),
+    status: v.union(v.literal("active"), v.literal("disabled")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"]),
 
-// Positions
-export const positions = {
-  userId: "string",
-  instrumentId: "string",
-  netQuantity: number,
-  averagePrice: number,
-  totalBuyQuantity: number,
-  totalSellQuantity: number,
-  totalBuyAmount: number,
-  totalSellAmount: number,
-  todayBuyQuantity: number,
-  todaySellQuantity: number,
-  todayBuyAmount: number,
-  todaySellAmount: number,
-  unrealizedPL: number,
-  realizedPL: number,
-  lastUpdated: number,
-};
-
-// Holdings (historical)
-export const holdings = {
-  userId: "string",
-  instrumentId: "string",
-  quantity: number,
-  averagePrice: number,
-  purchaseDate: number,
-  purchaseId: "string",
-  saleDate: "number | null",
-  salePrice: "number | null",
-  realizedPL: number,
-};
-
-// Cash balances
-export const cashBalances = {
-  userId: "string",
-  availableCash: number,
-  totalDebit: number,
-  totalCredit: number,
-  lastUpdated: number,
-};
-
-// Strategies
-export const strategies = {
-  userId: "string",
-  name: "string",
-  description: "string",
-  definition: {
-    entryRules: any[],
-    exitRules: any[],
-    riskManagement: {
-      positionSizing: "string",
-      stopLoss: number,
-      takeProfit: "number | null",
-      trailingStop: "number | null",
-      maxConcurrentPositions: number,
-      maxCapitalAllocation: number,
-    },
-    parameters: {
-      timeframe: "string",
-      indicators: {
-        smaPeriod: number,
-        emaPeriod: number,
-        rsiPeriod: number,
-        macdFast: number,
-        macdSlow: number,
-      },
-    },
-  },
-  isPaper: boolean,
-  isPublished: boolean,
-  createdAt: number,
-  updatedAt: number,
-};
-
-// Strategy versions
-export const strategyVersions = {
-  strategyId: "string",
-  version: number,
-  definition: any,
-  testResults: {
-    startDate: number,
-    endDate: number,
-    initialCapital: number,
-    finalEquity: number,
-    totalReturn: number,
-    maxDrawdown: number,
-    sharpeRatio: number,
-    totalTrades: number,
-    winRate: number,
-    profitFactor: number,
-  },
-  createdAt: number,
-};
-
-// Backtest runs
-export const backtestRuns = {
-  userId: "string",
-  strategyId: "string",
-  strategyVersion: number,
-  instrumentUniverse: any[],
-  startDate: number,
-  endDate: number,
-  timeframe: "string",
-  initialCapital: number,
-  positionSizing: "string",
-  transactionCosts: number,
-  slippage: number,
-  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED",
-  results: {
-    initialCapital: number,
-    finalEquity: number,
-    totalReturn: number,
-    maxDrawdown: number,
-    sharpeRatio: number,
-    totalTrades: number,
-    winRate: number,
-    profitFactor: number,
-    averageTradeExpectancy: number,
-    averageHoldingDuration: number,
-  },
-  createdAt: number,
-};
-
-// Backtest trades
-export const backtestTrades = {
-  backtestId: "string",
-  orderId: "string",
-  instrumentId: "string",
-  side: "BUY" | "SELL",
-  quantity: number,
-  price: number,
-  timestamp: number,
-  pnl: number,
-  strategyRule: "string",
-};
-
-// Alerts
-export const alerts = {
-  userId: "string",
-  type: "string",
-  instrumentId: "string | null",
-  condition: {
-    threshold: number,
-    operator: "above" | "below" | "crossover" | "crossunder",
-    indicator: "string | null",
-  },
-  isActive: boolean,
-  triggeredAt: "number | null",
-  createdAt: number,
-};
-
-// Audit logs
-export const auditLogs = {
-  userId: "string",
-  action: "string",
-  entityType: "order" | "position" | "strategy" | "backtest",
-  entityId: "string",
-  details: {},
-  createdAt: number,
-};
-
-// Market data source configurations
-export const marketDataSources = {
-  name: "string",
-  type: "string",
-  config: {
-    apiKey: "string | null",
-    baseUrl: "string",
-    symbols: any[],
-  },
-  isActive: boolean,
-  lastSyncedAt: "number | null",
-  createdAt: number,
-};
-
-// Market status
-export const marketStatus = {
-  market: "string",
-  status: "string",
-  lastUpdate: number,
-  indexValues: {
-    nifty50: "number | null",
-    sensex: "number | null",
-  },
-  topGainers: any[],
-  topLosers: any[],
-  mostActive: any[],
-};
+  // Paper order records — table exists as the persistence foundation for Phase 2.
+  // No engine writes to it in Phase 1; nothing is fabricated.
+  paperOrders: defineTable({
+    userId: v.id("users"),
+    accountId: v.id("paperAccounts"),
+    instrumentId: v.string(),
+    side: v.union(v.literal("BUY"), v.literal("SELL")),
+    orderType: v.union(v.literal("MARKET"), v.literal("LIMIT"), v.literal("STOP_LOSS")),
+    quantity: v.number(),
+    price: v.optional(v.number()),
+    triggerPrice: v.optional(v.number()),
+    status: v.union(
+      v.literal("PENDING"),
+      v.literal("FILLED"),
+      v.literal("CANCELLED"),
+      v.literal("REJECTED")
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_account", ["accountId"]),
+});

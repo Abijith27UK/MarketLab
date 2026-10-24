@@ -1,3 +1,5 @@
-export default {
-  schemaPath: "convex/schema.ts",
-};
+import { defineApp } from "convex/server";
+
+const app = defineApp();
+
+export default app;

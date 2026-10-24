@@ -13,6 +13,7 @@
     "noImplicitAny": false,
     "baseUrl": ".",
     "paths": {
+      "@/convex/_generated/*": ["./convex/_generated/*"],
       "@/*": ["./src/*"]
     },
     "jsx": "react-jsx",
@@ -20,6 +21,6 @@
     "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "convex"]
+  "include": ["src", "convex/_generated"],
+  "exclude": ["node_modules", "dist"]
 }

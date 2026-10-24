@@ -1,12 +1,14 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { convexClient } from "../lib/convexClient";
+import React, { createContext, useContext, useEffect } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { useConvexAuth } from "@convex-dev/auth/react";
+import { api } from "@/convex/_generated/api";
 
 type Theme = "light" | "dark" | "system";
 
 interface UserProfile {
   userId: string;
   name: string;
-  email: string;
+  email: string | null;
   theme: Theme;
   currency: string;
   timezone: string;
@@ -16,29 +18,24 @@ interface UserProfile {
     duration: string;
     autoSquareOff: boolean;
   };
-  watchlistPreferences: {
-    defaultView: string;
-    autoRefresh: boolean;
-  };
   notificationPreferences: {
     emailNotifications: boolean;
     priceAlerts: boolean;
     weeklyDigest: boolean;
   };
-  createdAt: number;
-  updatedAt: number;
 }
 
 interface RootContextType {
   user: UserProfile | null;
+  isAuthenticated: boolean;
   theme: Theme;
-  setTheme: (theme: Theme) => void;
+  setTheme: (theme: Theme) => Promise<void> | void;
   currency: string;
-  setCurrency: (currency: string) => void;
+  setCurrency: (currency: string) => Promise<void> | void;
   timezone: string;
-  setTimezone: (timezone: string) => void;
+  setTimezone: (timezone: string) => Promise<void> | void;
   defaultTradingMode: "paper" | "live";
-  setDefaultTradingMode: (mode: "paper" | "live") => void;
+  setDefaultTradingMode: (mode: "paper" | "live") => Promise<void> | void;
   loading: boolean;
   setLoading: (loading: boolean) => void;
 }
@@ -54,80 +51,49 @@ export const useRootContext = () => {
 };
 
 export const RootProvider = ({ children }: { children: React.ReactNode }) => {
-  const [user, setUser] = useState<UserProfile | null>(null);
-  const [theme, setTheme] = useState<Theme>("system");
-  const [currency, setCurrency] = useState<string>("INR");
-  const [timezone, setTimezone] = useState<string>("Asia/Kolkata");
-  const [defaultTradingMode, setDefaultTradingMode] = useState<"paper" | "live">("paper");
-  const [loading, setLoading] = useState(true);
+  const { isLoading: authLoading, isAuthenticated } = useConvexAuth();
 
-  // Load user profile from convex on mount
+  // Reactive profile from the backend; null when signed out / not yet created.
+  const profile = useQuery(api.users.getProfile, {});
+  const ensureProfile = useMutation(api.users.ensureProfile);
+  const updateProfile = useMutation(api.users.updateProfile);
+
+  // Create the profile document once after sign-in (idempotent on the server).
   useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const profile = await convexClient.query<UserProfile | null>("userPreferences.get", {
-          userId: "current_user",
-        });
-        setUser(profile);
-      } catch (err) {
-        console.error("Failed to load user profile:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
+    if (isAuthenticated && profile === null) {
+      ensureProfile().catch((err) => {
+        console.error("Failed to ensure user profile:", err);
+      });
+    }
+  }, [isAuthenticated, profile, ensureProfile]);
 
-    loadUser();
-  }, []);
+  const loading =
+    authLoading || (isAuthenticated && profile === undefined) || profile === undefined;
 
-  const setThemeHandler = (newTheme: Theme) => {
-    setTheme(newTheme);
-    convexClient.mutation("userPreferences.patch", {
-      theme: newTheme,
-      userId: "current_user",
-    });
-  };
-
-  const setCurrencyHandler = (newCurrency: string) => {
-    setCurrency(newCurrency);
-    convexClient.mutation("userPreferences.patch", {
-      currency: newCurrency,
-      userId: "current_user",
-    });
-  };
-
-  const setTimezoneHandler = (newTimezone: string) => {
-    setTimezone(newTimezone);
-    convexClient.mutation("userPreferences.patch", {
-      timezone: newTimezone,
-      userId: "current_user",
-    });
-  };
-
-  const setDefaultTradingModeHandler = (mode: "paper" | "live") => {
-    setDefaultTradingMode(mode);
-    convexClient.mutation("userPreferences.patch", {
-      defaultTradingMode: mode,
-      userId: "current_user",
-    });
-  };
-
-  const value = {
-    user,
-    theme,
-    setTheme: setThemeHandler,
-    currency,
-    setCurrency: setCurrencyHandler,
-    timezone,
-    setTimezone: setTimezoneHandler,
-    defaultTradingMode,
-    setDefaultTradingMode: setDefaultTradingModeHandler,
+  const value: RootContextType = {
+    user: profile ?? null,
+    isAuthenticated,
+    theme: profile?.theme ?? "dark",
+    setTheme: async (theme) => {
+      await updateProfile({ theme });
+    },
+    currency: profile?.currency ?? "INR",
+    setCurrency: async (currency) => {
+      await updateProfile({ currency });
+    },
+    timezone: profile?.timezone ?? "Asia/Kolkata",
+    setTimezone: async (timezone) => {
+      await updateProfile({ timezone });
+    },
+    defaultTradingMode: profile?.defaultTradingMode ?? "paper",
+    setDefaultTradingMode: async (defaultTradingMode) => {
+      await updateProfile({ defaultTradingMode });
+    },
     loading,
-    setLoading,
+    setLoading: () => {
+      /* auth/profile loading is derived; kept for API compatibility */
+    },
   };
 
-  return (
-    <RootContext.Provider value={value}>
-      {children}
-    </RootContext.Provider>
-  );
+  return <RootContext.Provider value={value}>{children}</RootContext.Provider>;
 };
