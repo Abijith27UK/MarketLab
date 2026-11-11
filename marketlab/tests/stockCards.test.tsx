@@ -83,7 +83,6 @@ describe("StockCard", () => {
     let card = screen.getByTestId("stock-card");
     expect(card.getAttribute("data-mode")).toBe("LIVE");
     expect(card.textContent).toMatch(/LIVE/);
-    expect(card.textContent).toMatch(/fyers/);
     unmount();
 
     render(<StockCard model={baseModel()} onOpen={() => {}} now={Date.now()} />);

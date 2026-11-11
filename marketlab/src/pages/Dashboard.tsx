@@ -35,6 +35,7 @@ interface DashboardSections {
   topStocks: boolean;
   watchlist: boolean;
   movers: boolean;
+  gainersLosers: boolean;
 }
 
 const DEFAULT_SECTIONS: DashboardSections = {
@@ -42,6 +43,7 @@ const DEFAULT_SECTIONS: DashboardSections = {
   topStocks: true,
   watchlist: true,
   movers: true,
+  gainersLosers: true,
 };
 
 const SECTION_LABEL: Record<keyof DashboardSections, string> = {
@@ -49,6 +51,7 @@ const SECTION_LABEL: Record<keyof DashboardSections, string> = {
   topStocks: "Top stocks",
   watchlist: "Watchlist quotes",
   movers: "Movers",
+  gainersLosers: "Gainers/Losers of the Day",
 };
 
 interface DashboardProps {
@@ -233,8 +236,8 @@ export const DashboardLive: React.FC<DashboardProps> = ({ onNavigate, onOpenInst
   const trackedQuotes = Array.from(quoteById.values());
   const realQuotes = trackedQuotes.filter((quote) => quote.mode !== "SAMPLE");
   const ranked = [...realQuotes].sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
-  const gainers = ranked.slice(0, 3);
-  const losers = ranked.slice(-3).reverse();
+  const gainers = ranked.slice(0, 5);
+  const losers = ranked.slice(-5).reverse();
   const canRank = realQuotes.length >= 5;
 
   if (loading) {
@@ -290,7 +293,7 @@ export const DashboardLive: React.FC<DashboardProps> = ({ onNavigate, onOpenInst
         <SectionHeading
           title="Market indices"
           description="Index levels reported by the configured data source."
-          right={quotes.data ? <DataModeBadge mode={quotes.data.mode} /> : null}
+          right={quotes.data ? <DataModeBadge mode={quotes.data.mode} asOf={quotes.data.asOf} /> : null}
         />
         {quotes.error && (
           <InlineError message={`Could not load quotes: ${quotes.error}`} onRetry={quotes.refresh} />
@@ -323,7 +326,7 @@ export const DashboardLive: React.FC<DashboardProps> = ({ onNavigate, onOpenInst
         <SectionHeading
           title="Top stocks"
           description="Selected NSE large caps from the instrument catalogue. Tap a card for charts, indicators and fundamentals."
-          right={quotes.data ? <DataModeBadge mode={quotes.data.mode} /> : null}
+          right={quotes.data ? <DataModeBadge mode={quotes.data.mode} asOf={quotes.data.asOf} /> : null}
         />
         {stocks === undefined || quotesLoading ? (
           <CardSkeletons count={6} />
@@ -399,7 +402,7 @@ export const DashboardLive: React.FC<DashboardProps> = ({ onNavigate, onOpenInst
                       <span className={`ml-mono text-xs ${toneClass(quote?.changePercent)}`}>
                         {formatPercent(quote?.changePercent)}
                       </span>
-                      {quote && <DataModeBadge mode={quote.mode} />}
+                      {quote && <DataModeBadge mode={quote.mode} source={quote.source} />}
                     </span>
                   </li>
                 );
