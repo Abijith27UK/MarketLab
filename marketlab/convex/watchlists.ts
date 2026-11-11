@@ -111,6 +111,35 @@ export const remove = mutation({
   },
 });
 
+/**
+ * Reorders the user's own watchlists by moving one up or down one position.
+ * Positions are rewritten for the whole list so ordering stays deterministic.
+ */
+export const move = mutation({
+  args: { id: v.id("watchlists"), direction: v.union(v.literal("UP"), v.literal("DOWN")) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    await requireOwnedWatchlist(ctx, userId, args.id);
+    const lists = await ctx.db
+      .query("watchlists")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .order("asc")
+      .collect();
+    const index = lists.findIndex((list) => list._id === args.id);
+    const target = args.direction === "UP" ? index - 1 : index + 1;
+    if (index < 0 || target < 0 || target >= lists.length) return index;
+    const reordered = [...lists];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(target, 0, moved);
+    const now = Date.now();
+    for (let i = 0; i < reordered.length; i += 1) {
+      await ctx.db.patch(reordered[i]._id, { position: i, updatedAt: now });
+    }
+    return target;
+  },
+});
+
 export const addItem = mutation({
   args: {
     watchlistId: v.id("watchlists"),

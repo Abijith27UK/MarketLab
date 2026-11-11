@@ -4,10 +4,12 @@ import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "@/convex/_generated/api";
 import { useRootContext } from "@/context/RootContext";
 import { Card, Input, Select, Button } from "@/components/ui";
+import AuthPanel from "@/components/AuthPanel";
+import BackendRequired from "@/components/system/BackendRequired";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-const Profile: React.FC = () => {
+const ProfileLive: React.FC = () => {
   const {
     user,
     loading,
@@ -33,6 +35,7 @@ const Profile: React.FC = () => {
   const [productType, setProductType] = useState(
     user?.defaultOrderSettings.productType ?? "delivery"
   );
+  const [name, setName] = useState(user?.name ?? "");
   const [startingCapital, setStartingCapital] = useState(
     String(paperAccount?.startingCapital ?? "")
   );
@@ -52,6 +55,10 @@ const Profile: React.FC = () => {
   useEffect(() => {
     if (user) setProductType(user.defaultOrderSettings.productType);
   }, [user?.defaultOrderSettings.productType]);
+
+  useEffect(() => {
+    if (user) setName(user.name);
+  }, [user?.name]);
 
   const save = async (
     action: () => Promise<unknown> | void,
@@ -79,8 +86,15 @@ const Profile: React.FC = () => {
 
   if (!isAuthenticated || !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center py-12">
-        <p className="text-gray-400">Please sign in to view your profile</p>
+      <div className="p-4 md:p-6">
+        <h1 className="ml-page-title">Profile</h1>
+        <p className="ml-page-sub">
+          Preferences and paper-account settings are stored per user. Sign in to view and edit your
+          own.
+        </p>
+        <Card className="mt-5 max-w-md">
+          <AuthPanel />
+        </Card>
       </div>
     );
   }
@@ -118,10 +132,20 @@ const Profile: React.FC = () => {
 
         <div className="mb-4">
           <label className="text-sm text-gray-300 mb-2 block">Name</label>
-          <Input
-            value={user.name}
-            onChange={(value) => value.trim() && void save(() => updateProfile({ name: value.trim() }))}
-          />
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="min-w-56 flex-1">
+              <Input value={name} onChange={setName} placeholder="Your display name" />
+            </div>
+            <Button
+              size="sm"
+              disabled={!name.trim() || name.trim() === user.name || saveState === "saving"}
+              onClick={() =>
+                void save(() => updateProfile({ name: name.trim() }), "Name saved.")
+              }
+            >
+              Save name
+            </Button>
+          </div>
         </div>
 
         <div className="mb-4">
@@ -200,8 +224,8 @@ const Profile: React.FC = () => {
           />
         </div>
 
-        <div className="mb-4">
-          <label className="text-sm text-gray-300 mb-2 block">Notifications</label>
+        <fieldset className="mb-4">
+          <legend className="text-sm text-gray-300 mb-2 block">Notifications</legend>
           <label className="flex items-center gap-2 text-sm text-gray-300">
             <input
               type="checkbox"
@@ -217,7 +241,7 @@ const Profile: React.FC = () => {
                 )
               }
             />
-            Price alerts
+            Price alerts enabled
           </label>
           <label className="flex items-center gap-2 text-sm text-gray-300 mt-2">
             <input
@@ -236,7 +260,11 @@ const Profile: React.FC = () => {
             />
             Weekly digest
           </label>
-        </div>
+          <p className="mt-2 text-xs text-gray-500">
+            These flags are saved with your profile. This deployment has no email or push delivery,
+            and alerts are evaluated only when you run a check on the Alerts page.
+          </p>
+        </fieldset>
 
         <Button
           variant="danger"
@@ -291,40 +319,64 @@ const Profile: React.FC = () => {
               </div>
             </div>
 
-            <div className="mb-4">
-              <label className="text-sm text-gray-300 mb-2 block">
-                Starting Capital (₹)
-              </label>
-              <Input
-                value={startingCapital}
-                onChange={setStartingCapital}
-                onSubmit={(value) => {
-                  const parsed = Number(value);
-                  if (Number.isFinite(parsed) && parsed >= 0) {
-                    void save(
-                      () => updatePaperSettings({ startingCapital: parsed }),
-                      "Starting capital saved."
-                    );
-                  } else {
-                    setSaveState("error");
-                    setError("Starting capital must be a number >= 0.");
-                  }
-                }}
-              />
-              <p className="text-xs text-gray-600 mt-1">
-                Press Enter to save.
+            {paperAccount.startingCapitalLocked ? (
+              <p className="mb-4 text-xs text-amber-400/80" data-testid="capital-locked">
+                Starting capital is ₹
+                {paperAccount.startingCapital.toLocaleString("en-IN")} and is locked because
+                orders already exist. Changing it now would rewrite past performance, so a new
+                baseline requires a fresh account.
               </p>
-            </div>
+            ) : (
+              <div className="mb-4">
+                <label className="text-sm text-gray-300 mb-2 block">
+                  Starting Capital (₹)
+                </label>
+                <Input
+                  value={startingCapital}
+                  onChange={setStartingCapital}
+                  onSubmit={(value) => {
+                    const parsed = Number(value);
+                    if (Number.isFinite(parsed) && parsed >= 1000) {
+                      void save(
+                        () => updatePaperSettings({ startingCapital: parsed }),
+                        "Starting capital saved."
+                      );
+                    } else {
+                      setSaveState("error");
+                      setError("Starting capital must be at least ₹1,000.");
+                    }
+                  }}
+                />
+                <p className="text-xs text-gray-600 mt-1">
+                  Press Enter to save. Locked once the first order is placed.
+                </p>
+              </div>
+            )}
 
             <p className="text-xs text-gray-500">
-              No trades have been executed in this account. Cash balance only changes
-              through the trading engine in a later phase. Live trading remains disabled.
+              Simulated account. Cash, positions and P&amp;L are written only by the validated
+              paper-trading engine (Trading and Portfolio). No order reaches a broker and live
+              trading remains disabled.
             </p>
           </>
         )}
       </Card>
     </div>
   );
+};
+
+/* Backend-gated: the profile lives in Convex and requires an authenticated session. */
+const Profile: React.FC = () => {
+  const { backendOnline } = useRootContext();
+  if (!backendOnline) {
+    return (
+      <BackendRequired
+        feature="Profile"
+        description="Your name, currency, timezone, trading mode and paper-account settings are stored per user in Convex."
+      />
+    );
+  }
+  return <ProfileLive />;
 };
 
 export default Profile;

@@ -22,6 +22,13 @@ const notificationPreferencesValidator = v.object({
   weeklyDigest: v.boolean(),
 });
 
+const dashboardSectionsValidator = v.object({
+  indices: v.boolean(),
+  topStocks: v.boolean(),
+  watchlist: v.boolean(),
+  movers: v.boolean(),
+});
+
 /**
  * Returns the authenticated user's profile, or null when signed out.
  * Owner is derived from the session identity — never from client input.
@@ -95,6 +102,7 @@ export const updateProfile = mutation({
     defaultTradingMode: v.optional(tradingModeValidator),
     defaultOrderSettings: v.optional(orderSettingsValidator),
     notificationPreferences: v.optional(notificationPreferencesValidator),
+    dashboardSections: v.optional(dashboardSectionsValidator),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -116,6 +124,7 @@ export const updateProfile = mutation({
       updates.defaultOrderSettings = args.defaultOrderSettings;
     if (args.notificationPreferences !== undefined)
       updates.notificationPreferences = args.notificationPreferences;
+    if (args.dashboardSections !== undefined) updates.dashboardSections = args.dashboardSections;
 
     await ctx.db.patch(profile._id, updates);
     return profile._id;

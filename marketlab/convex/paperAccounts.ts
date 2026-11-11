@@ -1,8 +1,13 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-
-const DEFAULT_STARTING_CAPITAL = 100_000;
+import {
+  DEFAULT_STARTING_CAPITAL,
+  MAX_STARTING_CAPITAL,
+  MIN_STARTING_CAPITAL,
+  PAPER_CURRENCY,
+  roundMoney,
+} from "./paperCore/config";
 
 /**
  * Returns the signed-in user's paper trading account, or null.
@@ -39,18 +44,24 @@ export const ensure = mutation({
       userId,
       startingCapital: DEFAULT_STARTING_CAPITAL,
       availableCash: DEFAULT_STARTING_CAPITAL,
-      currency: "INR",
+      currency: PAPER_CURRENCY,
       status: "active",
       createdAt: now,
       updatedAt: now,
+      realizedPnl: 0,
+      startingCapitalLocked: false,
+      lastOrderAt: null,
     });
   },
 });
 
 /**
  * Updates paper account settings for the signed-in user.
- * Cash balance is intentionally not client-writable; it will only be
- * changed by the trading engine in a later phase.
+ *
+ * Cash balance is intentionally not client-writable — only the validated order
+ * engine in `convex/paper.ts` moves money. Starting capital becomes immutable
+ * once the first simulated order exists, otherwise past performance could be
+ * rewritten after the fact.
  */
 export const updateSettings = mutation({
   args: {
@@ -69,11 +80,36 @@ export const updateSettings = mutation({
 
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
     if (args.startingCapital !== undefined) {
-      if (args.startingCapital < 0) throw new Error("Starting capital must be >= 0");
-      updates.startingCapital = args.startingCapital;
+      if (
+        !Number.isFinite(args.startingCapital) ||
+        args.startingCapital < MIN_STARTING_CAPITAL ||
+        args.startingCapital > MAX_STARTING_CAPITAL
+      ) {
+        throw new Error(
+          `Starting capital must be between ₹${MIN_STARTING_CAPITAL.toLocaleString("en-IN")} and ₹${MAX_STARTING_CAPITAL.toLocaleString("en-IN")}.`
+        );
+      }
+      const anyOrder = await ctx.db
+        .query("paperOrders")
+        .withIndex("by_account_created", (q) => q.eq("accountId", account._id))
+        .first();
+      if (anyOrder || (account.startingCapitalLocked ?? false)) {
+        throw new Error(
+          "Starting capital is locked after the first order. It can only be changed before trading starts."
+        );
+      }
+      const capital = roundMoney(args.startingCapital);
+      updates.startingCapital = capital;
+      // Nothing has traded yet, so cash equals the baseline.
+      updates.availableCash = capital;
     }
     if (args.status !== undefined) updates.status = args.status;
-    if (args.currency !== undefined) updates.currency = args.currency;
+    if (args.currency !== undefined) {
+      if (args.currency !== PAPER_CURRENCY) {
+        throw new Error(`Paper accounts are INR only — ${PAPER_CURRENCY} is the supported currency.`);
+      }
+      updates.currency = PAPER_CURRENCY;
+    }
     await ctx.db.patch(account._id, updates);
     return account._id;
   },

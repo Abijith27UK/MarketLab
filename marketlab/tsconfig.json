@@ -14,7 +14,9 @@
     "baseUrl": ".",
     "paths": {
       "@/convex/_generated/*": ["./convex/_generated/*"],
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@quant/*": ["./convex/market/*"],
+      "@backtest/*": ["./convex/backtestCore/*"]
     },
     "jsx": "react-jsx",
     "jsxImportSource": "react",

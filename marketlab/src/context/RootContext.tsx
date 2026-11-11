@@ -23,9 +23,18 @@ interface UserProfile {
     priceAlerts: boolean;
     weeklyDigest: boolean;
   };
+  /** Optional: profiles created before Phase 5 have no stored preference. */
+  dashboardSections?: {
+    indices: boolean;
+    topStocks: boolean;
+    watchlist: boolean;
+    movers: boolean;
+  };
 }
 
 interface RootContextType {
+  /** False while the Convex deployment is unreachable — auth and persistence are unavailable. */
+  backendOnline: boolean;
   user: UserProfile | null;
   isAuthenticated: boolean;
   theme: Theme;
@@ -38,6 +47,8 @@ interface RootContextType {
   setDefaultTradingMode: (mode: "paper" | "live") => Promise<void> | void;
   loading: boolean;
   setLoading: (loading: boolean) => void;
+  /** Re-probes the deployment immediately (no-op while online). */
+  retryBackend: () => void;
 }
 
 const RootContext = createContext<RootContextType | undefined>(undefined);
@@ -71,6 +82,7 @@ export const RootProvider = ({ children }: { children: React.ReactNode }) => {
     authLoading || (isAuthenticated && profile === undefined) || profile === undefined;
 
   const value: RootContextType = {
+    backendOnline: true,
     user: profile ?? null,
     isAuthenticated,
     theme: profile?.theme ?? "dark",
@@ -92,6 +104,52 @@ export const RootProvider = ({ children }: { children: React.ReactNode }) => {
     loading,
     setLoading: () => {
       /* auth/profile loading is derived; kept for API compatibility */
+    },
+    retryBackend: () => {
+      /* the deployment is reachable — nothing to retry */
+    },
+  };
+
+  return <RootContext.Provider value={value}>{children}</RootContext.Provider>;
+};
+
+/**
+ * Provider used when the Convex deployment cannot be reached.
+ *
+ * It deliberately calls no Convex hooks: no client exists in this state, so
+ * nothing polls, authenticates or opens a socket. Every Convex-backed page is
+ * gated on `backendOnline` and shows an explicit "backend unavailable" panel
+ * instead of pretending the read succeeded.
+ */
+export const OfflineRootProvider = ({
+  children,
+  onRetry,
+}: {
+  children: React.ReactNode;
+  onRetry?: () => void;
+}) => {
+  const noop = async () => {
+    /* no backend: settings cannot be persisted */
+  };
+
+  const value: RootContextType = {
+    backendOnline: false,
+    user: null,
+    isAuthenticated: false,
+    theme: "dark",
+    setTheme: noop,
+    currency: "INR",
+    setCurrency: noop,
+    timezone: "Asia/Kolkata",
+    setTimezone: noop,
+    defaultTradingMode: "paper",
+    setDefaultTradingMode: noop,
+    loading: false,
+    setLoading: () => {
+      /* nothing to load without a backend */
+    },
+    retryBackend: () => {
+      onRetry?.();
     },
   };
 

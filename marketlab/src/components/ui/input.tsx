@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 interface InputProps {
   type?: string;
@@ -11,6 +11,13 @@ interface InputProps {
   className?: string;
 }
 
+/**
+ * Text/number input.
+ *
+ * Editable locally (so typing never depends on a parent round-trip) but it
+ * follows the `value` prop when the parent changes it — otherwise a parent that
+ * clears or preselects a value would silently keep showing the stale text.
+ */
 export const Input = ({ 
   type = "text", 
   placeholder, 
@@ -21,7 +28,11 @@ export const Input = ({
   label, 
   className = "" 
 }: InputProps) => {
-  const [inputValue, setInputValue] = useState(value || "");
+  const [inputValue, setInputValue] = useState(value ?? "");
+
+  useEffect(() => {
+    if (value !== undefined) setInputValue(value);
+  }, [value]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(e.target.value);
