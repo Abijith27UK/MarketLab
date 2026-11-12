@@ -5,7 +5,7 @@
  * by the Convex backend, the React frontend and unit tests alike.
  */
 
-export type ProviderId = "fyers" | "breeze" | "tapetide" | "tejhq";
+export type ProviderId = "fyers" | "breeze" | "tapetide" | "tejhq" | "nsemcp";
 
 export type Exchange = "NSE" | "BSE";
 
@@ -238,5 +238,11 @@ export function makeInstrumentId(
 }
 
 export function isProviderId(value: string): value is ProviderId {
-  return value === "fyers" || value === "breeze" || value === "tapetide" || value === "tejhq";
+  return (
+    value === "fyers" ||
+    value === "breeze" ||
+    value === "tapetide" ||
+    value === "tejhq" ||
+    value === "nsemcp"
+  );
 }

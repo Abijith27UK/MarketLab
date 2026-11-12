@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { RefreshCw, Upload } from "lucide-react";
 import { useRootContext } from "@/context/RootContext";
-import { Card, Button } from "@/components/ui";
+import { Card, Button, SectionHeader } from "@/components/ui";
+import PageHeader from "@/components/layout/PageHeader";
 import BackendRequired from "@/components/system/BackendRequired";
 import DataModeBadge from "@/components/market/DataModeBadge";
 import {
@@ -50,9 +52,33 @@ const SETUP: Record<string, string[]> = {
   ],
   tapetide: [
     "npx convex env set TAPETIDE_API_TOKEN <your-personal-token>",
-    "Free plan: 50 successful requests per IST day.",
+    "Research reads Tapetide's MCP server. Its REST API is not included in the Free plan (verified 2026-11-12).",
+    "Enables the company profile, financial statements, shareholding, corporate actions and company news on instrument pages.",
+    "Optional research only: it never replaces the selected quote provider and never feeds paper fills or valuations.",
+  ],
+  gnews: [
+    "Optional: npx convex env set GNEWS_API_KEY <your-key>",
+    "Only used when Tapetide is unavailable for news; free-tier articles can be delayed ~12 hours.",
+    "The key stays in the Convex backend and is never sent to the browser.",
+  ],
+  nsemcp: [
+    "npx convex env set NSE_MCP_POC_ENABLED true",
+    "Private educational proof of concept: do not publish, redistribute or monetize this feed.",
+    "NSE documents an approximately 1–3 minute delay. Quotes are always labelled DELAYED.",
+    "Never used for paper fills, alerts, portfolio valuation or backtests.",
   ],
 };
+
+const STATUS_LABEL: Record<string, string> = {
+  ok: "Connected",
+  off: "Not configured",
+  warn: "Action needed",
+};
+
+const StatusPill: React.FC<{ tone: "ok" | "warn" | "off"; children: React.ReactNode }> = ({
+  tone,
+  children,
+}) => <span className={`ml-status-pill is-${tone}`}>{children}</span>;
 
 const DataSourcesLive: React.FC = () => {
   const { isAuthenticated } = useRootContext();
@@ -60,6 +86,7 @@ const DataSourcesLive: React.FC = () => {
   const testProvider = useAction(marketApi.testProvider);
   const syncInstruments = useAction(marketApi.syncInstruments);
   const deleteImport = useMutation(marketApi.deleteImport);
+  const setQuoteProvider = useMutation(marketApi.setQuoteProvider);
   const imports = useQuery(marketApi.listImports, {});
 
   const [overview, setOverview] = useState<ProviderOverview | null>(null);
@@ -69,6 +96,7 @@ const DataSourcesLive: React.FC = () => {
   const [testing, setTesting] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [savingSource, setSavingSource] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -108,6 +136,18 @@ const DataSourcesLive: React.FC = () => {
     }
   };
 
+  const chooseSource = async (id: "tejhq" | "nsemcp") => {
+    setSavingSource(id);
+    try {
+      await setQuoteProvider({ provider: id });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not switch quote source");
+    } finally {
+      setSavingSource(null);
+    }
+  };
+
   const runSync = async () => {
     setSyncing(true);
     setSyncStatus(null);
@@ -126,100 +166,197 @@ const DataSourcesLive: React.FC = () => {
 
   return (
     <div className="p-4 md:p-6">
-      <header className="mb-6">
-        <h1 className="text-3xl font-bold">Data Sources</h1>
-        <p className="text-gray-400">
-          Provider status, credentials and historical imports. Credentials live only in the Convex
-          deployment environment — never in the browser bundle, never in Git.
-        </p>
-      </header>
+      <PageHeader
+        title="Data Sources"
+        description="Provider status, credentials and historical imports. Credentials live only in the Convex deployment environment — never in the browser bundle, never in Git."
+        meta={
+          overview ? (
+            <>
+              <DataModeBadge
+                mode={overview.coverage.providerQuotes > 0 ? "DELAYED" : "SAMPLE"}
+                source={overview.coverage.eodQuotes > 0 ? "eod" : undefined}
+              />
+              <span className="ml-metric__hint">
+                {overview.coverage.providerQuotes} stored prices ·{" "}
+                {overview.coverage.cachedCandleSeries} cached series
+              </span>
+            </>
+          ) : null
+        }
+        actions={
+          <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
+            <RefreshCw size={13} aria-hidden="true" />
+            {loading ? "Refreshing…" : "Refresh status"}
+          </Button>
+        }
+      />
 
-      {loading && <p className="text-sm text-gray-400">Loading provider status…</p>}
+      {loading && !overview && (
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <span className="skeleton" style={{ height: 92 }} />
+          <span className="skeleton" style={{ height: 180 }} />
+        </div>
+      )}
       {error && (
-        <p role="alert" className="mb-4 text-sm text-red-400">
+        <p role="alert" className="ml-field-error mb-4">
           {error}
         </p>
       )}
 
       {overview && (
-        <Card className="mb-6">
-          <div className="grid grid-cols-1 gap-4 text-sm md:grid-cols-5">
-            <div>
-              <p className="text-gray-500">Exchange session</p>
-              <p className="text-gray-200">
+        <Card className="mb-4">
+          <div className="ml-metric-grid">
+            <div className="ml-metric">
+              <p className="ml-metric__label">Exchange session</p>
+              <p className="ml-metric__value">
                 {overview.session.label} · {overview.session.istTime} IST
               </p>
-              <p className="text-xs text-gray-600">
+              <p className="ml-metric__hint">
                 {overview.holidaysConfigured
                   ? "Holiday calendar configured"
                   : "Holiday calendar not configured"}
               </p>
             </div>
-            <div>
-              <p className="text-gray-500">Catalogue</p>
-              <p className="text-gray-200">
-                {overview.catalogue.total} instruments ({overview.catalogue.provider} provider,{" "}
-                {overview.catalogue.sample} sample)
+            <div className="ml-metric">
+              <p className="ml-metric__label">Catalogue</p>
+              <p className="ml-metric__value">{overview.catalogue.total} instruments</p>
+              <p className="ml-metric__hint">
+                {overview.catalogue.provider} from a provider · {overview.catalogue.sample} sample
               </p>
             </div>
-            <div>
-              <p className="text-gray-500">Candle intervals available</p>
-              <p className="text-gray-200">
+            <div className="ml-metric">
+              <p className="ml-metric__label">Candle intervals</p>
+              <p className="ml-metric__value">
                 {overview.availableIntervals.length === 0
-                  ? "Sample data only"
-                  : overview.availableIntervals.map((interval) => INTERVAL_LABEL[interval]).join(", ")}
+                  ? "Sample only"
+                  : overview.availableIntervals
+                      .map((interval) => INTERVAL_LABEL[interval])
+                      .join(", ")}
               </p>
+              <p className="ml-metric__hint">From configured providers</p>
             </div>
-            <div>
-              <p className="text-gray-500">Latest session in store</p>
-              <p>
-                <span className="ml-mono text-gray-200">
-                  {overview.coverage.latestQuoteSessionDate ??
-                    overview.coverage.latestCandleDate ??
-                    "none yet"}
-                </span>
+            <div className="ml-metric">
+              <p className="ml-metric__label">Latest session in store</p>
+              <p className="ml-metric__value ml-mono">
+                {overview.coverage.latestQuoteSessionDate ??
+                  overview.coverage.latestCandleDate ??
+                  "none yet"}
               </p>
-              <p className="text-xs text-gray-600">
-                {overview.coverage.providerQuotes} stored prices ·{" "}
-                {overview.coverage.cachedCandleSeries} cached series
-              </p>
-            </div>
-            <div>
-              <p className="text-gray-500">Data mode</p>
-              <p>
-                <DataModeBadge
-                  mode={overview.coverage.providerQuotes > 0 ? "DELAYED" : "SAMPLE"}
-                  source={overview.coverage.eodQuotes > 0 ? "eod" : undefined}
-                />
-              </p>
-              <p className="text-xs text-gray-600">
+              <p className="ml-metric__hint">
                 {overview.coverage.providerQuotes === 0
                   ? "No real prices stored — every price is sample data."
                   : overview.coverage.eodQuotes === overview.coverage.providerQuotes
                     ? "End-of-day closes only. Nothing here is live or intraday."
-                    : "Providers configured; each value keeps its own freshness label."}
+                    : "Each value keeps its own freshness label."}
               </p>
             </div>
           </div>
         </Card>
       )}
 
-      <div className="mb-6 grid grid-cols-1 gap-4">
+      {overview && (
+        <Card className="mb-4">
+          <SectionHeader
+            title="Quote source"
+            description="Which provider prices the informational quote views — dashboard cards, Markets and instrument details. Switching never resets watchlists, instruments or orders, and never changes paper fills, alerts or backtests."
+          />
+          <div className="ml-source-options mt-3">
+            {[
+              {
+                id: "tejhq" as const,
+                name: "TejHQ",
+                tag: "End-of-day data",
+                detail: "Latest available market close and historical daily data.",
+                available: true,
+              },
+              {
+                id: "nsemcp" as const,
+                name: "NSE MCP",
+                tag: "Experimental · Delayed market data",
+                detail:
+                  "Official NSE MCP market snapshots, subject to connection availability and verified provider support.",
+                available: overview.nseMcpEnabled,
+              },
+            ].map((option) => {
+              const active = overview.preferredQuoteProvider === option.id;
+              return (
+                <div
+                  key={option.id}
+                  className={`ml-source-option${active ? " is-active" : ""}`}
+                >
+                  <div className="ml-source-option__head">
+                    <span className="ml-source-option__name">{option.name}</span>
+                    {active ? <StatusPill tone="ok">Selected</StatusPill> : null}
+                    {!option.available ? <StatusPill tone="off">Disabled</StatusPill> : null}
+                  </div>
+                  <p className="ml-source-option__tag">{option.tag}</p>
+                  <p className="ml-metric__hint">{option.detail}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant={active ? "secondary" : "primary"}
+                      disabled={
+                        active ||
+                        !option.available ||
+                        !isAuthenticated ||
+                        savingSource !== null
+                      }
+                      onClick={() => void chooseSource(option.id)}
+                    >
+                      {active
+                        ? "In use"
+                        : savingSource === option.id
+                          ? "Switching…"
+                          : "Use this source"}
+                    </Button>
+                    {option.id === "nsemcp" && !option.available ? (
+                      <span className="ml-metric__hint">
+                        Set NSE_MCP_POC_ENABLED=true on the deployment to enable.
+                      </span>
+                    ) : null}
+                    {option.id === "nsemcp" && option.available ? (
+                      <span className="ml-metric__hint">
+                        Informational only — never used to price orders.
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {!isAuthenticated ? (
+            <p className="ml-metric__hint mt-2">
+              Sign in to choose a source. Signed-out views use the TejHQ default.
+            </p>
+          ) : null}
+        </Card>
+      )}
+
+      <div className="mb-4 grid grid-cols-1 gap-4">
         {(overview?.providers ?? []).map((provider) => {
           const test = testResults[provider.providerId];
+          const tone = provider.configured ? "ok" : "warn";
           return (
             <Card key={provider.providerId}>
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-lg font-semibold">{provider.label}</h2>
-                  <p className="text-xs text-gray-500">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="ml-section-title">{provider.label}</h2>
+                    <StatusPill tone={tone}>{STATUS_LABEL[tone]}</StatusPill>
+                    {test && (
+                      <StatusPill tone={test.ok ? "ok" : "off"}>
+                        {test.ok ? "Connection verified" : "Connection failed"}
+                      </StatusPill>
+                    )}
+                  </div>
+                  <p className="ml-metric__hint mt-1">
                     Auth:{" "}
                     {provider.authMode === "none"
                       ? "keyless — no credentials required"
                       : provider.authMode.replace(/_/g, " ")}{" "}
                     ·{" "}
                     <a
-                      className="text-emerald-400 hover:underline"
+                      className="text-[var(--accent)] hover:underline"
                       href={provider.docsUrl}
                       target="_blank"
                       rel="noreferrer"
@@ -228,96 +365,79 @@ const DataSourcesLive: React.FC = () => {
                     </a>
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-xs ${
-                      provider.configured
-                        ? "border-emerald-500/60 text-emerald-300"
-                        : "border-amber-500/60 text-amber-300"
-                    }`}
-                  >
-                    {provider.configured ? "Configured" : "Not configured"}
-                  </span>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!isAuthenticated || testing === provider.providerId}
-                    onClick={() => void runTest(provider)}
-                  >
-                    {testing === provider.providerId ? "Testing…" : "Test connection"}
-                  </Button>
-                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!isAuthenticated || testing === provider.providerId}
+                  onClick={() => void runTest(provider)}
+                >
+                  {testing === provider.providerId ? "Testing…" : "Test connection"}
+                </Button>
               </div>
 
               {!provider.configured && (
-                <div className="mb-3 rounded border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-200">
-                  <p className="font-medium">Missing configuration</p>
+                <div className="ml-setup mt-3">
+                  <p className="font-semibold">Missing configuration</p>
                   <p className="mt-1">{provider.missingEnv.join(", ") || "unknown"}</p>
-                  <pre className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-amber-100/90">
-                    {SETUP[provider.providerId]?.join("\n")}
-                  </pre>
+                  <pre className="ml-setup__code">{SETUP[provider.providerId]?.join("\n")}</pre>
                 </div>
               )}
 
               {test && (
                 <p
                   role="status"
-                  className={`mb-3 text-xs ${test.ok ? "text-emerald-400" : "text-red-400"}`}
+                  className={`mt-3 text-[11px] ${test.ok ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}
                 >
-                  {test.ok ? "Connection verified" : "Connection failed"} · {test.message}
-                  {test.latencyMs > 0 ? ` (${test.latencyMs} ms)` : ""}
+                  {test.message}
+                  {test.latencyMs > 0 ? ` · ${test.latencyMs} ms` : ""}
                 </p>
               )}
 
-              <p className="mb-2 text-xs text-gray-400">
-                Data frequency: <span className="text-gray-200">{describeCadence(provider)}</span>
+              <p className="ml-detail-note mt-3">
+                Data frequency: <span className="text-[var(--text-2)]">{describeCadence(provider)}</span>
               </p>
 
-              <div className="grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+              <div className="ml-caps mt-3">
                 {Object.entries(provider.capabilities).map(([name, descriptor]) => (
                   <div
                     key={name}
-                    className={`rounded border px-2 py-1.5 ${
-                      descriptor.supported
-                        ? "border-gray-700 text-gray-200"
-                        : "border-gray-800 text-gray-600"
-                    }`}
+                    className={`ml-cap${descriptor.supported ? "" : " is-off"}`}
                     title={descriptor.note ?? ""}
                   >
-                    <div className="font-medium">{CAPABILITY_LABELS[name] ?? name}</div>
-                    <div className="text-[11px] opacity-80">
+                    <span className="ml-cap__name">{CAPABILITY_LABELS[name] ?? name}</span>
+                    <span className="ml-cap__value">
                       {descriptor.supported
                         ? descriptor.intervals
                           ? descriptor.intervals.map((i) => INTERVAL_LABEL[i]).join(" ")
                           : "supported"
                         : "not available"}
-                    </div>
+                    </span>
                   </div>
                 ))}
               </div>
 
-              <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-400 md:grid-cols-4">
+              <dl className="ml-kv mt-3">
                 <div>
-                  <dt className="text-gray-500">Last success</dt>
+                  <dt>Last success</dt>
                   <dd>{provider.lastSuccessAt ? formatAge(provider.lastSuccessAt, Date.now()) : "never"}</dd>
                 </div>
                 <div>
-                  <dt className="text-gray-500">Last trading date</dt>
+                  <dt>Last trading date</dt>
                   <dd className="ml-mono">{provider.lastDataDate ?? "—"}</dd>
                 </div>
                 <div>
-                  <dt className="text-gray-500">Last attempt</dt>
+                  <dt>Last attempt</dt>
                   <dd>{provider.lastAttemptAt ? formatDateTime(provider.lastAttemptAt) : "never"}</dd>
                 </div>
                 <div>
-                  <dt className="text-gray-500">Requests this minute</dt>
-                  <dd>
+                  <dt>Requests this minute</dt>
+                  <dd className="ml-mono">
                     {provider.rateWindowCount}/{provider.rateLimitPerMinute}
                     {provider.dailyLimit ? ` · ${provider.dailyCount}/${provider.dailyLimit} today` : ""}
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-gray-500">Instruments synced</dt>
+                  <dt>Instruments synced</dt>
                   <dd>
                     {provider.instrumentCount ?? 0}
                     {provider.instrumentsSyncedAt
@@ -328,12 +448,12 @@ const DataSourcesLive: React.FC = () => {
               </dl>
 
               {provider.lastError && (
-                <p className="mt-2 text-xs text-red-400">Last error: {provider.lastError}</p>
+                <p className="ml-field-error mt-2">Last error: {provider.lastError}</p>
               )}
 
-              <ul className="mt-3 space-y-1 text-[11px] text-gray-500">
+              <ul className="ml-provider__notes">
                 {provider.notes.map((note) => (
-                  <li key={note}>• {note}</li>
+                  <li key={note}>{note}</li>
                 ))}
               </ul>
             </Card>
@@ -341,90 +461,96 @@ const DataSourcesLive: React.FC = () => {
         })}
       </div>
 
-      <Card className="mb-6">
-        <h2 className="mb-1 text-lg font-semibold">What each feature is using</h2>
-        <p className="mb-3 text-sm text-gray-400">
-          Derived from the data actually stored in this deployment — not from “a provider is
-          configured”. End-of-day closes are shown as DELAYED and are never treated as live or
-          intraday prices.
-        </p>
-        <ul className="space-y-2">
+      <Card className="mb-4">
+        <SectionHeader
+          title="What each feature is using"
+          description="Derived from the data actually stored in this deployment — not from “a provider is configured”. End-of-day closes are shown as DELAYED and are never treated as live or intraday prices."
+        />
+        <ul className="mt-3 space-y-1">
           {(overview?.features ?? []).map((feature) => (
-            <li
-              key={feature.key}
-              className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-gray-800 pb-2 text-sm last:border-0"
-            >
-              <span className="min-w-48 text-gray-200">{feature.label}</span>
+            <li key={feature.key} className="ml-feature-row">
+              <span className="min-w-48 text-[var(--text-2)]">{feature.label}</span>
               {feature.mode === "UNAVAILABLE" ? (
-                <span className="rounded-full border border-red-500/60 px-2 py-0.5 text-[11px] text-red-300">
-                  UNAVAILABLE
-                </span>
+                <StatusPill tone="off">UNAVAILABLE</StatusPill>
               ) : (
                 <DataModeBadge mode={feature.mode} />
               )}
-              <span className="text-xs text-gray-500">{feature.detail}</span>
+              <span className="text-[11px] text-[var(--text-3)]">{feature.detail}</span>
             </li>
           ))}
         </ul>
       </Card>
 
-      <Card className="mb-6">
-        <h2 className="mb-2 text-lg font-semibold">Instrument master</h2>
-        <p className="text-sm text-gray-400">
-          Sync the exchange instrument list from a configured provider. A failed or empty sync never
-          replaces existing instruments — the 15 sample records stay usable offline.
-        </p>
+      <Card className="mb-4">
+        <SectionHeader
+          title="Instrument master"
+          description="Sync the exchange instrument list from a configured provider. A failed or empty sync never replaces existing instruments — the sample records stay usable offline."
+        />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <Button
             variant="secondary"
             onClick={() => void runSync()}
             disabled={!isAuthenticated || syncing || !overview?.hasConfiguredProvider}
           >
+            <RefreshCw size={13} aria-hidden="true" />
             {syncing ? "Syncing…" : "Sync NSE + BSE instruments"}
           </Button>
-          {!isAuthenticated && <span className="text-xs text-gray-500">Sign in to sync.</span>}
+          {!isAuthenticated && (
+            <span className="ml-metric__hint">Sign in to sync.</span>
+          )}
           {isAuthenticated && !overview?.hasConfiguredProvider && (
-            <span className="text-xs text-amber-400/80">
+            <span className="ml-ticket__hint ml-ticket__hint--warn">
               Configure a provider that publishes an instrument master (TejHQ is keyless) to enable
               this sync.
             </span>
           )}
         </div>
-        {syncStatus && <p className="mt-2 text-xs text-emerald-400">{syncStatus}</p>}
+        {syncStatus && (
+          <p role="status" className="ml-ticket__notice mt-2">
+            {syncStatus}
+          </p>
+        )}
       </Card>
 
       <Card>
-        <h2 className="mb-2 text-lg font-semibold">Your historical imports</h2>
-        <p className="text-sm text-gray-400">
-          CSV imports are private to your account and stored as separate datasets so they are never
-          mixed with provider candles.
-        </p>
-        {!isAuthenticated && <p className="mt-3 text-sm text-gray-500">Sign in to view imports.</p>}
+        <SectionHeader
+          title="Your historical imports"
+          description="CSV imports are private to your account and stored as separate datasets so they are never mixed with provider candles."
+        />
+        {!isAuthenticated && (
+          <p className="ml-metric__hint mt-3">Sign in to view imports.</p>
+        )}
         {isAuthenticated && (imports ?? []).length === 0 && (
-          <p className="mt-3 text-sm text-gray-500">
-            No imports yet. Open an instrument and upload an OHLCV CSV.
-          </p>
+          <div className="ml-empty-block mt-3">
+            <p className="ml-empty-block__title">No imports yet</p>
+            <p className="ml-empty-block__body">
+              Open an instrument and upload an OHLCV CSV to build a private dataset.
+            </p>
+            <span className="ml-metric__hint">
+              <Upload size={11} aria-hidden="true" /> Instrument → Historical data → CSV file
+            </span>
+          </div>
         )}
         <ul className="mt-3 space-y-2">
           {(imports ?? []).map((record) => (
-            <li
-              key={record._id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded border border-gray-800 px-3 py-2 text-xs"
-            >
-              <span>
-                <b className="text-gray-200">{record.instrumentLabel}</b> ·{" "}
-                {INTERVAL_LABEL[record.interval]} · {record.fileName}
+            <li key={record._id} className="ml-list-row">
+              <span className="min-w-0">
+                <span className="ml-data-table__symbol">{record.instrumentLabel}</span>
+                <span className="ml-data-table__name">
+                  {INTERVAL_LABEL[record.interval]} · {record.fileName}
+                </span>
               </span>
-              <span className="text-gray-500">
+              <span className="text-[11px] text-[var(--text-3)]">
                 {record.acceptedRows} rows · {record.rejectedRows} rejected ·{" "}
                 {record.status === "failed" ? (
-                  <span className="text-red-400">failed</span>
+                  <span className="text-[var(--neg)]">failed</span>
                 ) : (
                   formatDateTime(record.firstTs)
                 )}
               </span>
               <button
-                className="text-red-400 hover:text-red-300"
+                type="button"
+                className="ml-row-action is-danger"
                 onClick={() => {
                   if (confirm("Delete this imported dataset?")) {
                     void deleteImport({ importId: record._id });
@@ -433,9 +559,7 @@ const DataSourcesLive: React.FC = () => {
               >
                 Delete
               </button>
-              {record.error && (
-                <span className="w-full text-red-400">Error: {record.error}</span>
-              )}
+              {record.error && <span className="w-full text-[var(--neg)]">Error: {record.error}</span>}
             </li>
           ))}
         </ul>

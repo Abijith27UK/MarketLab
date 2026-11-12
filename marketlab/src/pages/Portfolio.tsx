@@ -2,7 +2,8 @@ import React, { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useRootContext } from "@/context/RootContext";
-import { Button, Card } from "@/components/ui";
+import { Button, Card, EmptyState, Select } from "@/components/ui";
+import SectionHeader from "@/components/ui/section-header";
 import AuthPanel from "@/components/AuthPanel";
 import BackendRequired from "@/components/system/BackendRequired";
 import DataModeBadge from "@/components/market/DataModeBadge";
@@ -20,13 +21,7 @@ import {
   type PositionSortKey,
   type SortState,
 } from "@/lib/tableSort";
-import {
-  formatDateTime,
-  formatInr,
-  formatPrice,
-  formatSignedInr,
-  toneClass,
-} from "@/lib/format";
+import { formatDateTime, formatInr, formatPrice, formatSignedInr, toneClass } from "@/lib/format";
 
 interface PortfolioProps {
   onOpenInstrument: (instrumentId: string) => void;
@@ -36,52 +31,70 @@ interface PortfolioProps {
 const LedgerTable: React.FC<{ entries: PaperLedgerRow[] }> = ({ entries }) => {
   if (entries.length === 0) {
     return (
-      <p className="ml-empty" data-testid="ledger-empty">
-        No fills recorded yet. Each filled order adds one ledger entry that explains the cash and
-        position change.
-      </p>
+      <div className="ml-empty-block" data-testid="ledger-empty">
+        <p className="ml-empty-block__title">No fills recorded yet</p>
+        <p className="ml-empty-block__body">
+          Each filled order adds one ledger entry that explains the cash and position change.
+        </p>
+      </div>
     );
   }
   return (
-    <div className="overflow-x-auto">
-      <table className="ml-table" data-testid="ledger-table">
+    <div className="ml-table-scroll">
+      <table className="ml-data-table" data-testid="ledger-table">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Instrument</th>
-            <th>Side</th>
-            <th className="is-right">Qty</th>
-            <th className="is-right">Price</th>
-            <th className="is-right">Cash Δ</th>
-            <th className="is-right">Cash after</th>
-            <th className="is-right">Qty after</th>
-            <th className="is-right">Realised</th>
-            <th>Price source</th>
+            <th scope="col">Time</th>
+            <th scope="col">Instrument</th>
+            <th scope="col">Side</th>
+            <th scope="col" className="is-right">
+              Qty
+            </th>
+            <th scope="col" className="is-right ml-cell-hide-sm">
+              Price
+            </th>
+            <th scope="col" className="is-right">
+              Cash Δ
+            </th>
+            <th scope="col" className="is-right ml-cell-hide-sm">
+              Cash after
+            </th>
+            <th scope="col" className="is-right ml-cell-hide-sm">
+              Qty after
+            </th>
+            <th scope="col" className="is-right">
+              Realised
+            </th>
+            <th scope="col" className="ml-cell-hide-sm">
+              Price source
+            </th>
           </tr>
         </thead>
         <tbody>
           {entries.map((entry) => (
             <tr key={entry._id}>
-              <td className="whitespace-nowrap text-xs text-gray-400">
+              <td className="whitespace-nowrap text-[11px] text-[var(--text-3)]">
                 {formatDateTime(entry.ts)}
               </td>
-              <td className="text-gray-200">{entry.symbol}</td>
+              <td>
+                <span className="ml-data-table__symbol">{entry.symbol}</span>
+              </td>
               <td>
                 <span className={entry.kind === "BUY" ? "ml-side-tag is-buy" : "ml-side-tag is-sell"}>
                   {entry.kind}
                 </span>
               </td>
-              <td className="is-right ml-mono">{entry.quantity}</td>
-              <td className="is-right ml-mono">{formatPrice(entry.price)}</td>
-              <td className={`is-right ml-mono ${toneClass(entry.cashDelta)}`}>
+              <td className="is-right is-num">{entry.quantity}</td>
+              <td className="is-right is-num ml-cell-hide-sm">{formatPrice(entry.price)}</td>
+              <td className={`is-right is-num ${toneClass(entry.cashDelta)}`}>
                 {formatSignedInr(entry.cashDelta)}
               </td>
-              <td className="is-right ml-mono">{formatInr(entry.cashAfter)}</td>
-              <td className="is-right ml-mono">{entry.positionQtyAfter}</td>
-              <td className={`is-right ml-mono ${toneClass(entry.realizedPnl)}`}>
+              <td className="is-right is-num ml-cell-hide-sm">{formatInr(entry.cashAfter)}</td>
+              <td className="is-right is-num ml-cell-hide-sm">{entry.positionQtyAfter}</td>
+              <td className={`is-right is-num ${toneClass(entry.realizedPnl)}`}>
                 {formatSignedInr(entry.realizedPnl)}
               </td>
-              <td>
+              <td className="ml-cell-hide-sm">
                 <DataModeBadge mode={entry.mode} source={entry.source} />
               </td>
             </tr>
@@ -117,7 +130,13 @@ const PortfolioLive: React.FC<PortfolioProps> = ({ onOpenInstrument, onNavigate 
   const visibleLedger = useMemo(() => filterLedger(ledger ?? [], ledgerSide), [ledger, ledgerSide]);
 
   if (loading) {
-    return <div className="p-6 text-gray-400">Loading portfolio…</div>;
+    return (
+      <div className="p-4 md:p-6" aria-busy="true">
+        <span className="skeleton" style={{ display: "block", height: 26, width: 160 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 120 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 240 }} />
+      </div>
+    );
   }
 
   if (!isAuthenticated) {
@@ -137,9 +156,9 @@ const PortfolioLive: React.FC<PortfolioProps> = ({ onOpenInstrument, onNavigate 
 
   if (summary === undefined) {
     return (
-      <div className="p-4 md:p-6">
-        <div className="skeleton mb-4 h-24 w-full rounded-xl" />
-        <div className="skeleton h-64 w-full rounded-xl" />
+      <div className="p-4 md:p-6" aria-busy="true">
+        <span className="skeleton" style={{ display: "block", height: 96 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 240 }} />
       </div>
     );
   }
@@ -159,17 +178,20 @@ const PortfolioLive: React.FC<PortfolioProps> = ({ onOpenInstrument, onNavigate 
     );
   }
 
+  const hasPositions = summary.positions.length > 0;
+
   return (
     <div className="p-4 md:p-6">
-      <header className="ml-page-head">
-        <div>
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="ml-page-title">Portfolio</h1>
           <p className="ml-page-sub">
             Simulated holdings and P&amp;L derived from the fill ledger. Nothing here is a brokerage
             balance.
           </p>
         </div>
-        <div className="ml-page-head-side">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="ml-badge">PAPER ONLY</span>
           <Button variant="secondary" size="sm" onClick={() => onNavigate("trading")}>
             Place an order
           </Button>
@@ -178,139 +200,171 @@ const PortfolioLive: React.FC<PortfolioProps> = ({ onOpenInstrument, onNavigate 
 
       <PaperSummary summary={summary} />
 
-      <Card className="mt-6">
-        <div className="ml-section-head">
-          <div>
-            <h2 className="ml-section-title">Positions</h2>
-            <p className="ml-section-sub">
-              Weighted-average cost basis. Unrealised P&amp;L uses each instrument&apos;s eligible
-              price and inherits its data-mode label.
-            </p>
-          </div>
-          <label className="ml-compact-field">
-            <span>Sort</span>
-            <select
-              className="ml-compact-select"
-              value={positionSort.key}
-              onChange={(event) =>
-                setPositionSort({
-                  key: event.target.value as PositionSortKey,
-                  dir: positionSort.dir,
-                })
+      <section className="mt-5">
+        <Card>
+          <SectionHeader
+            title="Holdings"
+            description="Weighted-average cost basis. Unrealised P&L uses each instrument’s eligible price and inherits its data-mode label."
+            actions={
+              hasPositions ? (
+                <div className="flex items-end gap-2">
+                  <div className="w-40">
+                    <Select
+                      label="Sort by"
+                      value={positionSort.key}
+                      onSelect={(value) =>
+                        setPositionSort({ key: value as PositionSortKey, dir: positionSort.dir })
+                      }
+                      options={[
+                        { value: "value", label: "Market value" },
+                        { value: "pnl", label: "Unrealised P&L" },
+                        { value: "quantity", label: "Quantity" },
+                        { value: "averageCost", label: "Average cost" },
+                        { value: "symbol", label: "Symbol" },
+                      ]}
+                    />
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => setPositionSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
+                    aria-label={positionSort.dir === 1 ? "Sort ascending" : "Sort descending"}
+                  >
+                    {positionSort.dir === 1 ? "Asc ↑" : "Desc ↓"}
+                  </Button>
+                </div>
+              ) : null
+            }
+          />
+          <div className="mt-3">
+            <PositionsTable
+              positions={sortedPositions}
+              onOpenInstrument={onOpenInstrument}
+              emptyAction={
+                <Button variant="primary" size="sm" onClick={() => onNavigate("trading")}>
+                  Place a paper order
+                </Button>
               }
-              aria-label="Sort positions by"
-            >
-              <option value="value">Market value</option>
-              <option value="pnl">Unrealised P&amp;L</option>
-              <option value="quantity">Quantity</option>
-              <option value="averageCost">Average cost</option>
-              <option value="symbol">Symbol</option>
-            </select>
-            <button
-              type="button"
-              className="ml-row-action"
-              onClick={() => setPositionSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
-              aria-label={positionSort.dir === 1 ? "Sort ascending" : "Sort descending"}
-            >
-              {positionSort.dir === 1 ? "↑" : "↓"}
-            </button>
-          </label>
-        </div>
-        <PositionsTable positions={sortedPositions} onOpenInstrument={onOpenInstrument} />
-      </Card>
+            />
+          </div>
+        </Card>
+      </section>
 
-      <Card className="mt-6">
-        <div className="ml-section-head">
-          <div>
-            <h2 className="ml-section-title">Orders</h2>
-            <p className="ml-section-sub">Every state, including rejections and cancellations.</p>
+      <section className="mt-5">
+        <Card>
+          <SectionHeader
+            title="Orders"
+            description="Every state, including rejections and cancellations."
+            actions={
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="w-36">
+                  <Select
+                    label="Status"
+                    value={statusFilter}
+                    onSelect={(value) => setStatusFilter(value as OrderStatusFilter)}
+                    options={[
+                      { value: "ALL", label: "All" },
+                      { value: "OPEN", label: "Open" },
+                      { value: "FILLED", label: "Filled" },
+                      { value: "REJECTED", label: "Rejected" },
+                      { value: "CANCELLED", label: "Cancelled" },
+                    ]}
+                  />
+                </div>
+                <div className="w-36">
+                  <Select
+                    label="Sort by"
+                    value={orderSort.key}
+                    onSelect={(value) =>
+                      setOrderSort({ key: value as OrderSortKey, dir: orderSort.dir })
+                    }
+                    options={[
+                      { value: "placed", label: "Placed" },
+                      { value: "symbol", label: "Symbol" },
+                      { value: "quantity", label: "Quantity" },
+                      { value: "status", label: "Status" },
+                    ]}
+                  />
+                </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setOrderSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
+                  aria-label={orderSort.dir === 1 ? "Sort ascending" : "Sort descending"}
+                >
+                  {orderSort.dir === 1 ? "Asc ↑" : "Desc ↓"}
+                </Button>
+              </div>
+            }
+          />
+          <div className="mt-3">
+            {orders === undefined ? (
+              <div className="flex flex-col gap-2" aria-busy="true">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <span key={index} className="skeleton" style={{ height: 32 }} />
+                ))}
+              </div>
+            ) : orders.length === 0 ? (
+              <OrdersTable
+                orders={[]}
+                emptyMessage="No simulated orders yet. Use the order ticket on the Trading page to place one."
+              />
+            ) : visibleOrders.length === 0 ? (
+              <div className="ml-empty-block" data-testid="orders-filtered-empty">
+                <p className="ml-empty-block__title">No orders match this status filter</p>
+                <p className="ml-empty-block__body">
+                  Switch the filter back to “All” to see every recorded order.
+                </p>
+              </div>
+            ) : (
+              <OrdersTable orders={visibleOrders} emptyMessage="No simulated orders yet." />
+            )}
           </div>
-          <div className="ml-filter-row">
-            <label className="ml-compact-field">
-              <span>Status</span>
-              <select
-                className="ml-compact-select"
-                value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as OrderStatusFilter)}
-                aria-label="Filter orders by status"
-              >
-                <option value="ALL">All</option>
-                <option value="OPEN">Open</option>
-                <option value="FILLED">Filled</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-            </label>
-            <label className="ml-compact-field">
-              <span>Sort</span>
-              <select
-                className="ml-compact-select"
-                value={orderSort.key}
-                onChange={(event) =>
-                  setOrderSort({ key: event.target.value as OrderSortKey, dir: orderSort.dir })
-                }
-                aria-label="Sort orders by"
-              >
-                <option value="placed">Placed</option>
-                <option value="symbol">Symbol</option>
-                <option value="quantity">Quantity</option>
-                <option value="status">Status</option>
-              </select>
-              <button
-                type="button"
-                className="ml-row-action"
-                onClick={() => setOrderSort((s) => ({ ...s, dir: s.dir === 1 ? -1 : 1 }))}
-                aria-label={orderSort.dir === 1 ? "Sort ascending" : "Sort descending"}
-              >
-                {orderSort.dir === 1 ? "↑" : "↓"}
-              </button>
-            </label>
-          </div>
-        </div>
-        {orders === undefined ? (
-          <p className="ml-empty">Loading orders…</p>
-        ) : visibleOrders.length === 0 ? (
-          <p className="ml-empty" data-testid="orders-filtered-empty">
-            No orders match this status filter.
-          </p>
-        ) : (
-          <OrdersTable orders={visibleOrders} emptyMessage="No simulated orders yet." />
-        )}
-      </Card>
+        </Card>
+      </section>
 
-      <Card className="mt-6">
-        <div className="ml-section-head">
-          <div>
-            <h2 className="ml-section-title">Fill ledger</h2>
-            <p className="ml-section-sub">
-              Append-only record of cash and position movements. Replaying it reproduces the balances
-              above, and each entry keeps the price label that was actually used.
-            </p>
+      <section className="mt-5">
+        <Card>
+          <SectionHeader
+            title="Fill ledger"
+            description="Append-only record of cash and position movements. Replaying it reproduces the balances above, and each entry keeps the price label that was actually used."
+            actions={
+              <div className="w-36">
+                <Select
+                  label="Side"
+                  value={ledgerSide}
+                  onSelect={(value) => setLedgerSide(value as "ALL" | "BUY" | "SELL")}
+                  options={[
+                    { value: "ALL", label: "All" },
+                    { value: "BUY", label: "Buys" },
+                    { value: "SELL", label: "Sells" },
+                  ]}
+                />
+              </div>
+            }
+          />
+          <div className="mt-3">
+            {ledger === undefined ? (
+              <div className="flex flex-col gap-2" aria-busy="true">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <span key={index} className="skeleton" style={{ height: 32 }} />
+                ))}
+              </div>
+            ) : ledger.length === 0 ? (
+              <LedgerTable entries={[]} />
+            ) : visibleLedger.length === 0 ? (
+              <div className="ml-empty-block" data-testid="ledger-filtered-empty">
+                <p className="ml-empty-block__title">No ledger entries match this filter</p>
+                <p className="ml-empty-block__body">
+                  Every fill is recorded here with the cash and position change it caused.
+                </p>
+              </div>
+            ) : (
+              <LedgerTable entries={visibleLedger} />
+            )}
           </div>
-          <label className="ml-compact-field">
-            <span>Side</span>
-            <select
-              className="ml-compact-select"
-              value={ledgerSide}
-              onChange={(event) => setLedgerSide(event.target.value as "ALL" | "BUY" | "SELL")}
-              aria-label="Filter ledger by side"
-            >
-              <option value="ALL">All</option>
-              <option value="BUY">Buys</option>
-              <option value="SELL">Sells</option>
-            </select>
-          </label>
-        </div>
-        {ledger === undefined ? (
-          <p className="ml-empty">Loading ledger…</p>
-        ) : visibleLedger.length === 0 ? (
-          <p className="ml-empty" data-testid="ledger-filtered-empty">
-            No ledger entries match this filter.
-          </p>
-        ) : (
-          <LedgerTable entries={visibleLedger} />
-        )}
-      </Card>
+        </Card>
+      </section>
     </div>
   );
 };

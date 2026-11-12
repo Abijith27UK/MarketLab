@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { Button, Card, Input, Select } from "@/components/ui";
+import { Plus, Play } from "lucide-react";
+import { Button, Card, Input, Select, SectionHeader } from "@/components/ui";
+import PageHeader from "@/components/layout/PageHeader";
 import RuleEditor from "@/components/backtest/RuleEditor";
 import BacktestResults from "@/components/backtest/BacktestResults";
 import NumberField from "@/components/backtest/NumberField";
@@ -104,7 +106,7 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
 
   useEffect(() => {
     if (runs && runs.length > 0 && !selectedRunId) {
-      setSelectedRunId((runs[0] as any)._id);
+      setSelectedRunId(runs[0]._id as Id<"backtestRuns">);
     }
   }, [runs, selectedRunId]);
 
@@ -160,8 +162,8 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
       }
       const result = await runBacktest({ strategyId: activeId });
       setSelectedRunId(result.runId as Id<"backtestRuns">);
-    } catch (err: any) {
-      setRunError(err?.message ?? String(err));
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(false);
     }
@@ -175,9 +177,10 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
 
   if (!config) {
     return (
-      <div className="p-4 md:p-6">
-        <h1 className="ml-page-title">Strategies</h1>
-        <p className="ml-page-sub">Loading instruments...</p>
+      <div className="p-4 md:p-6" aria-busy="true">
+        <span className="skeleton" style={{ display: "block", height: 26, width: 180 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 120 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 240 }} />
       </div>
     );
   }
@@ -189,110 +192,124 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
 
   return (
     <div className="p-4 md:p-6">
-      <div className="ml-section-head">
-        <div>
-          <h1 className="ml-page-title">Strategies</h1>
-          <p className="ml-page-sub">
-            Build rules, backtest against historical candles, and inspect reproducible results.
-            Long-only equity only — no broker orders.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setActiveId(null)}>
-            New strategy
-          </Button>
-          {activeId && (
-            <>
-              <Button variant="secondary" size="sm" onClick={duplicate}>
-                Duplicate
-              </Button>
-              <Button variant="secondary" size="sm" onClick={remove}>
-                Delete
-              </Button>
-            </>
-          )}
-          <Button onClick={save} disabled={!canSave}>
-            {activeId ? "Save changes" : "Save strategy"}
-          </Button>
-          {activeId && (
-            <Button onClick={run} disabled={running || !entryValid}>
-              {running ? "Running..." : "Run backtest"}
+      <PageHeader
+        title="Strategies"
+        description="Build structured rules, backtest against historical candles, and inspect reproducible results. Long-only equity only — no broker orders."
+        meta={
+          <>
+            <span className="ml-badge">BACKTEST</span>
+            <span className="ml-metric__hint">
+              {strategies.length} saved strateg{strategies.length === 1 ? "y" : "ies"} ·{" "}
+              {(runs ?? []).length} saved run{(runs ?? []).length === 1 ? "" : "s"}
+            </span>
+          </>
+        }
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setActiveId(null)}>
+              <Plus size={13} aria-hidden="true" /> New strategy
             </Button>
-          )}
-        </div>
-      </div>
+            {activeId && (
+              <>
+                <Button variant="secondary" size="sm" onClick={duplicate}>
+                  Duplicate
+                </Button>
+                <Button variant="secondary" size="sm" onClick={remove}>
+                  Delete
+                </Button>
+              </>
+            )}
+            <Button variant="secondary" size="sm" onClick={save} disabled={!canSave}>
+              {activeId ? "Save changes" : "Save strategy"}
+            </Button>
+            {activeId && (
+              <Button onClick={run} disabled={running || !entryValid}>
+                <Play size={13} aria-hidden="true" />
+                {running ? "Running…" : "Run backtest"}
+              </Button>
+            )}
+          </>
+        }
+      />
 
       {!isAuthenticated && (
-        <Card className="mt-4 border-amber-500/40">
-          <p className="text-sm text-amber-200">
-            Sign in to save strategies and run backtests. You can still read the builder below.
-          </p>
-        </Card>
+        <p className="ml-ticket__hint ml-ticket__hint--warn mb-4">
+          Sign in to save strategies and run backtests. The builder stays readable either way, and
+          nothing is written to your account until you save.
+        </p>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
-        <Card>
-          <h2 className="ml-section-title">Saved strategies</h2>
-          <p className="ml-section-sub mb-3">Private to your account.</p>
-          {strategies.length === 0 ? (
-            <p className="text-xs text-gray-500">No saved strategies yet.</p>
-          ) : (
-            <ul className="ml-strategy-list">
-              {strategies.map((s) => (
-                <li key={s._id}>
-                  <button
-                    className={`ml-strategy-item${activeId === s._id ? " is-active" : ""}`}
-                    onClick={() => setActiveId(s._id)}
-                  >
-                    <span className="ml-strategy-name">{s.name}</span>
-                    <span className="ml-strategy-meta">
-                      {s.instrumentId} · {s.interval} · v{s.version}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {activeId && runs && runs.length > 0 && (
-            <>
-              <h3 className="ml-subtitle mt-4">Saved runs</h3>
-              <ul className="ml-strategy-list">
-                {runs.map((r) => (
-                  <li key={r._id}>
-                  <button
-                    className={`ml-strategy-item${selectedRunId === r._id ? " is-active" : ""}`}
-                    onClick={() => setSelectedRunId(r._id)}
-                  >
-                    <span className="ml-strategy-name">
-                      {r.status === "COMPLETED" ? `${r.metrics.finalEquity.toLocaleString("en-IN")}` : r.status}
-                    </span>
-                    <span className="ml-strategy-meta">
-                      {new Date(r.createdAt).toLocaleString("en-IN")} · {r.dataMode}
-                    </span>
-                  </button>
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+        <div className="xl:sticky xl:top-[76px] xl:self-start">
+          <Card>
+            <SectionHeader
+              title="Saved strategies"
+              description="Private to your account."
+            />
+            {strategies.length === 0 ? (
+              <div className="ml-empty-block mt-3">
+                <p className="ml-empty-block__title">No saved strategies</p>
+                <p className="ml-empty-block__body">
+                  Configure the draft on the right, then save it to keep it here.
+                </p>
+              </div>
+            ) : (
+              <ul className="ml-strategy-list mt-3">
+                {strategies.map((s) => (
+                  <li key={s._id}>
+                    <button
+                      type="button"
+                      className={`ml-strategy-item${activeId === s._id ? " is-active" : ""}`}
+                      onClick={() => setActiveId(s._id)}
+                    >
+                      <span className="ml-strategy-name">{s.name}</span>
+                      <span className="ml-strategy-meta">
+                        {s.instrumentId} · {s.interval} · v{s.version}
+                      </span>
+                    </button>
                   </li>
                 ))}
               </ul>
-            </>
-          )}
-        </Card>
+            )}
 
-        <div>
+            {activeId && runs && runs.length > 0 && (
+              <>
+                <h3 className="ml-metric__label mt-4">Saved runs</h3>
+                <ul className="ml-strategy-list mt-2">
+                  {runs.map((r) => (
+                    <li key={r._id}>
+                      <button
+                        type="button"
+                        className={`ml-strategy-item${selectedRunId === r._id ? " is-active" : ""}`}
+                        onClick={() => setSelectedRunId(r._id)}
+                      >
+                        <span className="ml-strategy-name">
+                          {r.status === "COMPLETED"
+                            ? `₹${r.metrics.finalEquity.toLocaleString("en-IN")}`
+                            : r.status}
+                        </span>
+                        <span className="ml-strategy-meta">
+                          {new Date(r.createdAt).toLocaleString("en-IN")} · {r.dataMode}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </Card>
+        </div>
+
+        <div className="min-w-0">
           <Card>
-            <div className="ml-section-head">
-              <div>
-                <h2 className="ml-section-title">Strategy details</h2>
-                <p className="ml-section-sub">Name, instrument, dates and assumptions.</p>
-              </div>
-            </div>
+            <SectionHeader
+              title="Strategy details"
+              description="Name, instrument, dates and assumptions. Everything here is stored with the strategy."
+            />
 
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div className="ml-form-grid mt-3">
               <Input label="Strategy name" value={name} onChange={setName} />
               <Input label="Description" value={description} onChange={setDescription} />
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4">
               <Select
                 label="Instrument"
                 value={config.instrumentId}
@@ -320,8 +337,15 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
                 onChange={(value) => updateConfig({ toMs: dateInputToMs(value) })}
               />
             </div>
+          </Card>
 
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4">
+          <Card className="mt-4">
+            <SectionHeader
+              title="Capital, costs & data"
+              description="Position sizing, risk limits and the costs the engine charges each fill."
+            />
+
+            <div className="ml-form-grid mt-3">
               <NumberField
                 label="Initial capital (INR)"
                 value={config.initialCapital}
@@ -330,7 +354,11 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
               <Select
                 label="Position sizing"
                 value={config.sizing.kind}
-                onSelect={(value) => updateConfig({ sizing: { ...config.sizing, kind: value as "PERCENT_OF_EQUITY" | "FIXED_QUANTITY" } })}
+                onSelect={(value) =>
+                  updateConfig({
+                    sizing: { ...config.sizing, kind: value as "PERCENT_OF_EQUITY" | "FIXED_QUANTITY" },
+                  })
+                }
                 options={SIZING}
               />
               {config.sizing.kind === "PERCENT_OF_EQUITY" ? (
@@ -343,17 +371,20 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
                 <NumberField
                   label="Fixed quantity (shares)"
                   value={config.sizing.quantity}
-                  onChange={(value) => updateConfig({ sizing: { ...config.sizing, quantity: value === null ? 1 : value } })}
+                  onChange={(value) =>
+                    updateConfig({ sizing: { ...config.sizing, quantity: value === null ? 1 : value } })
+                  }
                 />
               )}
               <NumberField
                 label="Max position % of equity"
                 value={config.sizing.maxPositionValuePct}
-                onChange={(value) => updateConfig({ sizing: { ...config.sizing, maxPositionValuePct: value === null ? 100 : value } })}
+                onChange={(value) =>
+                  updateConfig({
+                    sizing: { ...config.sizing, maxPositionValuePct: value === null ? 100 : value },
+                  })
+                }
               />
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-4">
               <NumberField
                 label="Stop-loss %"
                 value={config.stopLossPct}
@@ -374,13 +405,10 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
                 value={config.costs.slippageBps}
                 onChange={(value) => updateConfig({ costs: { ...config.costs, slippageBps: value ?? 0 } })}
               />
-            </div>
-
-            <div className="mt-3 md:w-64">
               <Select
                 label="Dataset"
                 value={config.datasetMode}
-                onSelect={(value) => updateConfig({ datasetMode: value as any })}
+                onSelect={(value) => updateConfig({ datasetMode: value as StrategyConfig["datasetMode"] })}
                 options={DATASET}
               />
             </div>
@@ -410,29 +438,34 @@ const Strategies: React.FC<Props> = ({ onOpenInstrument }) => {
           </div>
 
           {runError && (
-            <Card className="mt-4 border-red-500/40">
-              <p className="text-sm text-red-200">{runError}</p>
-            </Card>
+            <p className="ml-field-error mt-4" role="alert">
+              {runError}
+            </p>
           )}
 
           {prepareStatus && (
-            <Card className="mt-4">
-              <p className="text-sm text-gray-300">Data loaded for this run: {prepareStatus}</p>
-            </Card>
+            <p className="ml-ticket__notice mt-4" role="status">
+              Data loaded for this run: {prepareStatus}
+            </p>
           )}
 
           {selectedRun && <BacktestResults run={selectedRun} onDelete={deleteRunAction} />}
 
           {activeId && (!runs || runs.length === 0) && !running && (
-            <Card className="mt-4">
-              <p className="text-sm text-gray-400">
-                No runs yet. Save the strategy and click <strong>Run backtest</strong> to generate a
-                deterministic result.
+            <div className="ml-empty-block mt-4">
+              <p className="ml-empty-block__title">No runs yet</p>
+              <p className="ml-empty-block__body">
+                Save the strategy and run a backtest to generate a deterministic result you can
+                reload later.
               </p>
-              <Button variant="secondary" size="sm" className="mt-2" onClick={() => onOpenInstrument(config.instrumentId)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onOpenInstrument(config.instrumentId)}
+              >
                 View instrument chart
               </Button>
-            </Card>
+            </div>
           )}
         </div>
       </div>

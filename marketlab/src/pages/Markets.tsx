@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { ArrowRight, SearchX, RotateCw } from "lucide-react";
 import { api } from "@/convex/_generated/api";
 import { useRootContext } from "@/context/RootContext";
-import { Card, Button, Input, Select } from "@/components/ui";
+import { Button, Card, EmptyState, Input, Select, SectionHeader } from "@/components/ui";
 import DataModeBadge from "@/components/market/DataModeBadge";
+import DataFreshnessBadge from "@/components/market/DataFreshnessBadge";
+import FinancialValue from "@/components/market/FinancialValue";
+import MarketStatusBadge from "@/components/market/MarketStatusBadge";
+import PriceChange from "@/components/market/PriceChange";
 import StockCard from "@/components/market/StockCard";
 import { DEMO_INSTRUMENTS } from "@/lib/demoCatalogue";
-import { modelFromDemo } from "@/lib/stockModels";
+import { modelFromDemo, modelFromQuote } from "@/lib/stockModels";
 import { useQuotes } from "@/hooks/useQuotes";
 import {
   marketApi,
@@ -14,7 +19,7 @@ import {
   type InstrumentRow,
   type InstrumentType,
 } from "@/lib/marketClient";
-import { formatAge, formatPercent, formatPrice, formatVolume, signGlyph, toneClass } from "@/lib/format";
+import { formatAge, formatVolume } from "@/lib/format";
 
 interface MarketsProps {
   onOpenInstrument: (instrumentId: string) => void;
@@ -27,8 +32,54 @@ const instrumentIdOf = (row: InstrumentRow) =>
 
 const PAGE_SIZE = 25;
 
+const SORT_OPTIONS = [
+  { value: "symbol", label: "Symbol (A–Z)" },
+  { value: "price", label: "Last price" },
+  { value: "change", label: "Change %" },
+  { value: "volume", label: "Volume" },
+];
+
+const EXCHANGE_OPTIONS = [
+  { value: "ALL", label: "All exchanges" },
+  { value: "NSE", label: "NSE" },
+  { value: "BSE", label: "BSE" },
+];
+
+const TYPE_OPTIONS = [
+  { value: "ALL", label: "All types" },
+  { value: "EQUITY", label: "Equity" },
+  { value: "ETF", label: "ETF" },
+  { value: "INDEX", label: "Index" },
+  { value: "OTHER", label: "Other" },
+];
+
+/** Screen-reader friendly narrow-viewport probe; the table needs ~760px. */
+const NARROW_QUERY = "(max-width: 899px)";
+
+const useNarrow = (): boolean => {
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(NARROW_QUERY).matches
+      : false
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(NARROW_QUERY);
+    const update = () => setNarrow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return narrow;
+};
+
+/* ------------------------------------------------------------------- live */
+
 const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
   const { isAuthenticated } = useRootContext();
+  const narrow = useNarrow();
 
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -40,6 +91,7 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
   const [targetWatchlistId, setTargetWatchlistId] = useState("");
   const [status, setStatus] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [pendingSymbol, setPendingSymbol] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(search.trim()), 300);
@@ -72,6 +124,12 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
     [quoteData]
   );
 
+  // Freshness labels are relative, so stamp "now" whenever a new quote payload lands.
+  useEffect(() => {
+    if (!quoteData) return;
+    setNow(Date.now());
+  }, [quoteData]);
+
   const sortedRows = useMemo(() => {
     const list = [...rows];
     list.sort((a, b) => {
@@ -98,6 +156,15 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
       current.key === key ? { key, dir: current.dir === 1 ? -1 : 1 } : { key, dir: 1 }
     );
 
+  const hasFilters = search.trim() !== "" || exchange !== "ALL" || instrumentType !== "ALL";
+
+  const clearFilters = () => {
+    setSearch("");
+    setExchange("ALL");
+    setInstrumentType("ALL");
+    setSort({ key: "symbol", dir: 1 });
+  };
+
   const handleAdd = async (row: InstrumentRow) => {
     if (!targetWatchlistId) {
       setStatus({ kind: "error", text: "Select a watchlist first." });
@@ -121,28 +188,39 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
     }
   };
 
-  const sortMark = (key: SortKey) => (sort.key === key ? (sort.dir === 1 ? " ↑" : " ↓") : "");
+  const sortMark = (key: SortKey) => (sort.key === key ? (sort.dir === 1 ? "↑" : "↓") : null);
+
+  const showWatchlistPicker = isAuthenticated && (watchlists?.length ?? 0) > 0;
 
   return (
     <div className="p-4 md:p-6">
-      <header className="mb-6">
-        <h1 className="text-3xl font-bold">Markets</h1>
-        <p className="text-gray-400">
-          NSE &amp; BSE instrument explorer
-          {session ? ` · ${session.label} · ${session.istTime} IST` : ""}
-        </p>
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="ml-page-title">Markets</h1>
+          <p className="ml-page-sub">
+            Search the NSE and BSE instrument master, compare the latest available quote and open any
+            instrument for its full chart.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {session ? <MarketStatusBadge label={session.label} /> : null}
+          {session?.istTime ? (
+            <span className="ml-mono text-[11px] text-[var(--text-3)]">{session.istTime} IST</span>
+          ) : null}
+          {quoteData ? <DataModeBadge mode={quoteData.mode} source={quoteData.source} /> : null}
+        </div>
       </header>
 
       {session && !session.holidaysConfigured && (
-        <p className="mb-4 text-xs text-amber-400/80">
-          Session hours are derived from IST exchange timings. The exchange holiday calendar is not
+        <p className="ml-detail-note ml-detail-note--warn mb-4">
+          Session hours come from IST exchange timings. The exchange holiday calendar is not
           configured in this deployment, so holidays are not excluded.
         </p>
       )}
 
-      <Card className="mb-6">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-56 flex-1">
+      <Card className="mb-4">
+        <div className="ml-toolbar">
+          <div className="ml-toolbar__field">
             <Input
               label="Search by symbol or company"
               placeholder="e.g. RELIANCE, Infosys"
@@ -150,55 +228,85 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
               onChange={setSearch}
             />
           </div>
-          <div className="w-36">
+          <div className="ml-toolbar__field">
             <Select
               label="Exchange"
               value={exchange}
               onSelect={(value) => setExchange(value as Exchange | "ALL")}
-              options={[
-                { value: "ALL", label: "All exchanges" },
-                { value: "NSE", label: "NSE" },
-                { value: "BSE", label: "BSE" },
-              ]}
+              options={EXCHANGE_OPTIONS}
             />
           </div>
-          <div className="w-40">
+          <div className="ml-toolbar__field">
             <Select
               label="Instrument type"
               value={instrumentType}
               onSelect={(value) => setInstrumentType(value as InstrumentType | "ALL")}
-              options={[
-                { value: "ALL", label: "All types" },
-                { value: "EQUITY", label: "Equity" },
-                { value: "ETF", label: "ETF" },
-                { value: "INDEX", label: "Index" },
-                { value: "OTHER", label: "Other" },
-              ]}
+              options={TYPE_OPTIONS}
             />
           </div>
-          <Button variant="secondary" onClick={() => void refresh()} disabled={refreshing || ids.length === 0}>
-            {refreshing ? "Refreshing…" : "Refresh quotes"}
-          </Button>
+          <div className="ml-toolbar__field">
+            <Select
+              label="Sort by"
+              value={sort.key}
+              onSelect={(value) => setSort({ key: value as SortKey, dir: sort.dir })}
+              options={SORT_OPTIONS}
+            />
+          </div>
+          <div className="ml-toolbar__actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSort((current) => ({ ...current, dir: current.dir === 1 ? -1 : 1 }))}
+              aria-label={`Sort ${sort.dir === 1 ? "descending" : "ascending"}`}
+            >
+              {sort.dir === 1 ? "Asc ↑" : "Desc ↓"}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={clearFilters} disabled={!hasFilters}>
+              Clear filters
+            </Button>
+          </div>
         </div>
 
-        {isAuthenticated && (watchlists?.length ?? 0) > 0 && (
-          <div className="mt-4 max-w-xs">
-            <Select
-              label="Add to watchlist"
-              value={targetWatchlistId}
-              onSelect={setTargetWatchlistId}
-              options={(watchlists ?? []).map((wl) => ({ value: wl._id, label: wl.name }))}
-              placeholder="Select watchlist"
-            />
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void refresh()}
+              disabled={refreshing || ids.length === 0}
+            >
+              <RotateCw size={13} className={refreshing ? "ml-spin" : undefined} aria-hidden="true" />
+              {refreshing ? "Refreshing…" : "Refresh quotes"}
+            </Button>
+            {showWatchlistPicker && (
+              <div className="w-52">
+                <Select
+                  label="Add to watchlist"
+                  value={targetWatchlistId}
+                  onSelect={setTargetWatchlistId}
+                  options={(watchlists ?? []).map((wl) => ({ value: wl._id, label: wl.name }))}
+                  placeholder="Select watchlist"
+                />
+              </div>
+            )}
           </div>
-        )}
+          <p className="text-[11px] text-[var(--text-3)]">
+            {stats
+              ? `${stats.total} instruments · ${stats.provider} from a provider · ${stats.sample} sample`
+              : "Catalogue statistics unavailable"}
+          </p>
+        </div>
 
-        {quoteData?.note && <p className="mt-3 text-xs text-amber-400/80">{quoteData.note}</p>}
-        {quoteData?.warning && <p className="mt-2 text-xs text-red-400">{quoteData.warning}</p>}
+        {quoteData?.note && <p className="ml-detail-note ml-detail-note--warn mt-3">{quoteData.note}</p>}
+        {quoteData?.warning && (
+          <p role="alert" className="ml-detail-note ml-detail-note--warn mt-3">
+            {quoteData.warning}
+          </p>
+        )}
         {status && (
           <p
             role={status.kind === "error" ? "alert" : "status"}
-            className={`mt-3 text-sm ${status.kind === "error" ? "text-red-400" : "text-emerald-400"}`}
+            className={`mt-3 text-xs ${status.kind === "error" ? "text-[var(--neg)]" : "text-[var(--pos)]"}`}
           >
             {status.text}
           </p>
@@ -206,60 +314,105 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
       </Card>
 
       <Card>
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-xl font-semibold">Instruments</h2>
-          <div className="flex items-center gap-3 text-xs text-gray-500">
-            {stats && (
-              <span>
-                {stats.total} instruments · {stats.provider} provider · {stats.sample} sample
+        <SectionHeader
+          title="Instruments"
+          description={
+            result
+              ? `${rows.length} on this page · ${result.mode === "search" ? "matching your search" : "catalogue order"}`
+              : "Loading the instrument master…"
+          }
+          actions={
+            rows.length > 0 ? (
+              <span className="flex items-center gap-2 text-[11px] text-[var(--text-3)]">
+                {quotesLoading
+                  ? "Fetching quotes…"
+                  : quoteData?.quoteAsOf
+                    ? `Provider quote ${formatAge(quoteData.quoteAsOf, now)}`
+                    : "No provider quote timestamp"}
               </span>
-            )}
-            {quoteData && <DataModeBadge mode={quoteData.mode} source={quoteData.source} />}
-          </div>
-        </div>
+            ) : null
+          }
+        />
 
-        {result === undefined && <p className="text-gray-400">Loading instruments…</p>}
-
-        {result && rows.length === 0 && (
-          <div className="py-10 text-center">
-            <p className="text-gray-400">No instruments match these filters.</p>
-            <p className="mt-1 text-sm text-gray-600">
-              {stats && stats.provider === 0
-                ? "Only the sample catalogue is loaded. Sync the instrument master from the Data Sources page."
-                : "Try a different symbol or clear the filters."}
-            </p>
+        {result === undefined && (
+          <div className="ml-data-table-wrap mt-3" aria-hidden="true">
+            <div className="flex flex-col gap-2 p-3">
+              {Array.from({ length: 8 }).map((_, index) => (
+                <span key={index} className="skeleton" style={{ height: 34 }} />
+              ))}
+            </div>
           </div>
         )}
 
-        {rows.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="ml-table">
+        {result && rows.length === 0 && (
+          <div className="py-4">
+            <EmptyState
+              icon={<SearchX size={18} aria-hidden="true" />}
+              title={hasFilters ? "No instruments match these filters" : "The catalogue is empty"}
+              description={
+                stats && stats.provider === 0
+                  ? "Only the sample catalogue is loaded. Sync the instrument master from the Data Sources page."
+                  : "Try a different symbol, or clear the filters to browse the full catalogue."
+              }
+              action={
+                hasFilters ? (
+                  <Button variant="secondary" size="sm" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                ) : null
+              }
+            />
+          </div>
+        )}
+
+        {rows.length > 0 && narrow && (
+          <div className="ml-stock-grid mt-3">
+            {sortedRows.map((row) => {
+              const id = instrumentIdOf(row);
+              const quote = quoteById.get(id);
+              return (
+                <StockCard
+                  key={row._id}
+                  model={modelFromQuote({ ...row, instrumentId: id }, quote ?? null)}
+                  onOpen={onOpenInstrument}
+                  now={now}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {rows.length > 0 && !narrow && (
+          <div className="ml-data-table-wrap mt-3">
+            <table className="ml-data-table">
               <thead>
                 <tr>
-                  <th>
-                    <button onClick={() => toggleSort("symbol")} className="hover:text-white">
-                      Symbol{sortMark("symbol")}
+                  <th scope="col">
+                    <button type="button" onClick={() => toggleSort("symbol")}>
+                      Instrument <span aria-hidden="true">{sortMark("symbol")}</span>
                     </button>
                   </th>
-                  <th>Name</th>
-                  <th>Exchange</th>
-                  <th className="is-right">
-                    <button onClick={() => toggleSort("price")} className="hover:text-white">
-                      LTP{sortMark("price")}
+                  <th scope="col">Exchange</th>
+                  <th scope="col">Type</th>
+                  <th scope="col" className="is-right">
+                    <button type="button" onClick={() => toggleSort("price")}>
+                      Last price <span aria-hidden="true">{sortMark("price")}</span>
                     </button>
                   </th>
-                  <th className="is-right">
-                    <button onClick={() => toggleSort("change")} className="hover:text-white">
-                      Change{sortMark("change")}
+                  <th scope="col" className="is-right">
+                    <button type="button" onClick={() => toggleSort("change")}>
+                      Change <span aria-hidden="true">{sortMark("change")}</span>
                     </button>
                   </th>
-                  <th className="is-right">
-                    <button onClick={() => toggleSort("volume")} className="hover:text-white">
-                      Volume{sortMark("volume")}
+                  <th scope="col" className="is-right">
+                    <button type="button" onClick={() => toggleSort("volume")}>
+                      Volume <span aria-hidden="true">{sortMark("volume")}</span>
                     </button>
                   </th>
-                  <th>Data</th>
-                  <th />
+                  <th scope="col">Data</th>
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -268,49 +421,79 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
                   const quote = quoteById.get(id);
                   return (
                     <tr key={row._id}>
-                      <td className="font-medium text-gray-100">{row.symbol}</td>
-                      <td className="max-w-64 truncate">{row.name}</td>
                       <td>
-                        {row.exchange} · {row.instrumentType}
-                      </td>
-                      <td className="is-right ml-mono">
-                        {quotesLoading && !quote ? "…" : formatPrice(quote?.lastPrice)}
-                      </td>
-                      <td className={`is-right ml-mono ${toneClass(quote?.changePercent)}`}>
-                        {quote
-                          ? `${signGlyph(quote.changePercent)} ${formatPercent(quote.changePercent)}`
-                          : "—"}
-                      </td>
-                      <td className="is-right ml-mono">{formatVolume(quote?.volume)}</td>
-                      <td>
-                        {quote ? (
-                          <span className="flex items-center gap-2">
-                            <DataModeBadge mode={quote.mode} />
-                            <span className="text-xs text-gray-500">
-                              {formatAge(quote.quoteTime, Date.now())}
-                            </span>
-                          </span>
-                        ) : (
-                          <span className="text-xs text-gray-600">no quote</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className="flex justify-end gap-2">
+                        <span className="ml-data-table__instrument">
                           <button
-                            className="text-xs text-emerald-400 hover:text-emerald-300"
+                            type="button"
+                            className="ml-data-table__symbol"
                             onClick={() => onOpenInstrument(id)}
                           >
-                            Chart
+                            {row.symbol}
                           </button>
-                          {isAuthenticated && (watchlists?.length ?? 0) > 0 && (
+                          <span className="ml-data-table__name" title={row.name}>
+                            {row.name}
+                          </span>
+                        </span>
+                      </td>
+                      <td>
+                        <span className="ml-data-table__exchange">{row.exchange}</span>
+                      </td>
+                      <td className="text-[11px] uppercase tracking-wide text-[var(--text-3)]">
+                        {row.instrumentType}
+                      </td>
+                      <td className="is-right is-num">
+                        {quotesLoading && !quote ? (
+                          <span className="skeleton" style={{ display: "inline-block", height: 12, width: 56 }} />
+                        ) : (
+                          <FinancialValue value={quote?.lastPrice} size="sm" />
+                        )}
+                      </td>
+                      <td className="is-right">
+                        {quote ? (
+                          <PriceChange
+                            change={quote.change}
+                            changePercent={quote.changePercent}
+                            showAbsolute={false}
+                          />
+                        ) : (
+                          <span className="text-[11px] text-[var(--text-3)]">No quote</span>
+                        )}
+                      </td>
+                      <td className="is-right is-num text-[11px] text-[var(--text-3)]">
+                        {formatVolume(quote?.volume)}
+                      </td>
+                      <td>
+                        {quote ? (
+                          <DataFreshnessBadge
+                            mode={quote.mode}
+                            source={quote.source}
+                            asOf={quote.quoteTime}
+                            now={now}
+                          />
+                        ) : (
+                          <span className="text-[11px] text-[var(--text-3)]">Unavailable</span>
+                        )}
+                      </td>
+                      <td className="is-right">
+                        <div className="flex items-center justify-end gap-3">
+                          {showWatchlistPicker && (
                             <button
-                              className="text-xs text-gray-300 hover:text-white"
+                              type="button"
+                              className="ml-data-table__action text-[var(--text-3)] disabled:opacity-40"
                               disabled={pendingSymbol === id || !targetWatchlistId}
                               onClick={() => void handleAdd(row)}
                             >
                               Add
                             </button>
                           )}
+                          <button
+                            type="button"
+                            className="ml-data-table__action"
+                            onClick={() => onOpenInstrument(id)}
+                            aria-label={`Open ${row.symbol}`}
+                          >
+                            Details <ArrowRight size={12} aria-hidden="true" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -321,7 +504,7 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
           </div>
         )}
 
-        <div className="mt-4 flex items-center justify-between">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <Button
             variant="secondary"
             size="sm"
@@ -335,8 +518,12 @@ const MarketsLive: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
           >
             Previous
           </Button>
-          <span className="text-xs text-gray-500">
-            {result?.mode === "search" ? "Search results" : `Page size ${PAGE_SIZE}`}
+          <span className="text-[11px] text-[var(--text-3)]">
+            {result?.mode === "search"
+              ? "Search results"
+              : result?.isDone
+                ? "End of catalogue"
+                : `Up to ${PAGE_SIZE} per page`}
           </span>
           <Button
             variant="secondary"
@@ -381,52 +568,101 @@ export const MarketsDemo: React.FC<MarketsProps> = ({ onOpenInstrument }) => {
     }).map((instrument) => modelFromDemo(instrument, now, 20));
   }, [exchange, instrumentType, now, search]);
 
+  const hasFilters = search.trim() !== "" || exchange !== "ALL" || instrumentType !== "ALL";
+
   return (
     <div className="p-4 md:p-6">
-      <h1 className="ml-page-title">Markets</h1>
-      <p className="ml-page-sub">
-        Sample catalogue of {DEMO_INSTRUMENTS.length} demonstration instruments. The full NSE/BSE
-        instrument master syncs into Convex and returns when the backend is reachable.
-      </p>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-        <div className="md:col-span-2">
-          <Input placeholder="Search symbol or company" value={search} onChange={setSearch} />
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="ml-page-title">Markets</h1>
+          <p className="ml-page-sub">
+            Sample catalogue of {DEMO_INSTRUMENTS.length} demonstration instruments. The full NSE/BSE
+            instrument master syncs into Convex and returns when the backend is reachable.
+          </p>
         </div>
-        <Select
-          value={exchange}
-          onSelect={(value) => setExchange(value as Exchange | "ALL")}
-          options={[
-            { value: "ALL", label: "All exchanges" },
-            { value: "NSE", label: "NSE" },
-            { value: "BSE", label: "BSE" },
-          ]}
-          label="Exchange"
-        />
-        <Select
-          value={instrumentType}
-          onSelect={(value) => setInstrumentType(value as InstrumentType | "ALL")}
-          options={[
-            { value: "ALL", label: "All types" },
-            { value: "EQUITY", label: "Equity" },
-            { value: "ETF", label: "ETF" },
-            { value: "INDEX", label: "Index" },
-          ]}
-          label="Instrument type"
-        />
-      </div>
+        <DataModeBadge mode="SAMPLE" source="sample" />
+      </header>
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-gray-500" data-testid="demo-result-count">
+      <Card className="mb-4">
+        <div className="ml-toolbar">
+          <div className="ml-toolbar__field">
+            <Input
+              label="Search"
+              placeholder="Search symbol or company"
+              value={search}
+              onChange={setSearch}
+            />
+          </div>
+          <div className="ml-toolbar__field">
+            <Select
+              value={exchange}
+              onSelect={(value) => setExchange(value as Exchange | "ALL")}
+              options={EXCHANGE_OPTIONS}
+              label="Exchange"
+            />
+          </div>
+          <div className="ml-toolbar__field">
+            <Select
+              value={instrumentType}
+              onSelect={(value) => setInstrumentType(value as InstrumentType | "ALL")}
+              options={TYPE_OPTIONS.filter((option) => option.value !== "OTHER")}
+              label="Instrument type"
+            />
+          </div>
+          <div className="ml-toolbar__field">
+            <p className="text-[11px] text-[var(--text-3)]">
+              Sorting and pagination arrive with the synced instrument master.
+            </p>
+          </div>
+          <div className="ml-toolbar__actions">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!hasFilters}
+              onClick={() => {
+                setSearch("");
+                setExchange("ALL");
+                setInstrumentType("ALL");
+              }}
+            >
+              Clear filters
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[11px] text-[var(--text-3)]" data-testid="demo-result-count">
           {models.length} of {DEMO_INSTRUMENTS.length} sample instruments
         </p>
-        <DataModeBadge mode="SAMPLE" source="sample" />
+        <span className="text-[11px] text-[var(--text-3)]">
+          Prices are generated deterministically and are not exchange data.
+        </span>
       </div>
 
       {models.length === 0 ? (
-        <p className="ml-empty mt-4">No sample instrument matches that search.</p>
+        <EmptyState
+          icon={<SearchX size={18} aria-hidden="true" />}
+          title="No sample instrument matches that search"
+          description="Try a different symbol, or clear the filters to browse the sample catalogue."
+          action={
+            hasFilters ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setSearch("");
+                  setExchange("ALL");
+                  setInstrumentType("ALL");
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : null
+          }
+        />
       ) : (
-        <div className="ml-stock-grid mt-4">
+        <div className="ml-stock-grid">
           {models.map((model) => (
             <StockCard
               key={model.instrumentId}

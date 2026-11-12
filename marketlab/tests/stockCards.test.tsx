@@ -134,10 +134,14 @@ describe("DashboardDemo", () => {
   it("renders index cards and a clickable stock-card grid, all labelled SAMPLE", () => {
     render(<DashboardDemo onNavigate={() => {}} onOpenInstrument={() => {}} />);
 
+    const indexCards = screen.getAllByTestId("index-summary-card");
+    expect(indexCards).toHaveLength(3); // NIFTY 50, BANKNIFTY, SENSEX
     const cards = screen.getAllByTestId("stock-card");
-    expect(cards).toHaveLength(13); // 3 indices + 10 NSE equities
+    expect(cards).toHaveLength(10); // the ten seeded NSE equities
 
-    const modes = new Set(cards.map((card) => card.getAttribute("data-mode")));
+    const modes = new Set(
+      [...indexCards, ...cards].map((card) => card.getAttribute("data-mode"))
+    );
     expect([...modes]).toEqual(["SAMPLE"]);
     expect(screen.getByTestId("demo-chip").textContent).toMatch(/SAMPLE DATA/);
     expect(document.body.textContent).not.toMatch(/\bLIVE\b/);

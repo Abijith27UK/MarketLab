@@ -41,9 +41,19 @@ interface Envelope<T> {
   data?: T;
   meta?: Record<string, unknown>;
   error?: { code?: string; message?: string };
+  /** Plan/entitlement notice. Tapetide returns HTTP 200 with `data: null`. */
+  notice?: { code?: string; message?: string; plan?: string };
 }
 
-async function get<T>(env: ProviderEnv, path: string): Promise<{ meta: Record<string, unknown>; data: T }> {
+/**
+ * Authenticated GET against the Tapetide API. Exported so the research module
+ * (`convex/market/research/tapetide.ts`) can reuse the same auth, redaction and
+ * envelope handling instead of duplicating it.
+ */
+export async function tapetideRequest<T>(
+  env: ProviderEnv,
+  path: string
+): Promise<{ meta: Record<string, unknown>; data: T }> {
   const apiToken = token(env);
   if (!apiToken) {
     throw new Error("Tapetide is not configured. Set TAPETIDE_API_TOKEN in the Convex deployment.");
@@ -61,6 +71,17 @@ async function get<T>(env: ProviderEnv, path: string): Promise<{ meta: Record<st
   if (!response.ok || body.error) {
     const code = body.error?.code ?? String(response.status);
     throw new Error(redactError(`Tapetide ${code}: ${body.error?.message ?? "request failed"}`));
+  }
+  if (body.notice) {
+    // Verified 2026-11-12: the Free plan answers every REST route with HTTP 200,
+    // `data: null` and this notice. Say so instead of "no data returned".
+    throw new Error(
+      redactError(
+        `Tapetide ${body.notice.code ?? "notice"}: ${
+          body.notice.message ?? "REST API access is not included in the current plan."
+        }`
+      )
+    );
   }
   return { meta: body.meta ?? {}, data: body.data as T };
 }
@@ -115,7 +136,10 @@ async function fetchQuotes(
   for (let i = 0; i < instruments.length; i += 20) {
     const batch = instruments.slice(i, i + 20);
     const symbols = batch.map(tapetideSymbol).join(",");
-    const { data } = await get<unknown>(env, `/quotes?symbols=${encodeURIComponent(symbols)}`);
+    const { data } = await tapetideRequest<unknown>(
+      env,
+      `/quotes?symbols=${encodeURIComponent(symbols)}`
+    );
     const records: Record<string, unknown>[] = Array.isArray(data)
       ? (data as Record<string, unknown>[])
       : typeof data === "object" && data !== null
@@ -143,8 +167,11 @@ async function fetchFundamentals(
 ): Promise<Fundamentals> {
   const symbol = encodeURIComponent(tapetideSymbol(instrument));
   const [quote, financials] = await Promise.all([
-    get<Record<string, unknown>>(env, `/stocks/${symbol}/quote`),
-    get<Record<string, unknown>>(env, `/stocks/${symbol}/financials?periods=8`).catch(() => null),
+    tapetideRequest<Record<string, unknown>>(env, `/stocks/${symbol}/quote`),
+    tapetideRequest<Record<string, unknown>>(
+      env,
+      `/stocks/${symbol}/financials?periods=8`
+    ).catch(() => null),
   ]);
 
   const sections: { name: string; periodCount: number }[] = [];
@@ -181,20 +208,27 @@ async function testConnection(env: ProviderEnv): Promise<TestConnectionResult> {
   }
   const startedAt = Date.now();
   try {
-    const { data } = await get<Record<string, unknown>>(env, "/me/usage");
+    // Probe the MCP research surface, not REST: the Free plan answers every REST
+    // route with `api_access_not_in_plan` while research works over MCP
+    // (verified 2026-11-12). One small profile call per explicit test.
+    const { callTapetideMcp } = await import("../research/tapetideMcp");
+    const payload = await callTapetideMcp(env, "get_company_profile", { symbol: "ITC" });
     const latencyMs = Date.now() - startedAt;
-    const used = toFiniteNumber(data?.used) ?? toFiniteNumber(data?.requests_used);
-    const limit = toFiniteNumber(data?.limit) ?? toFiniteNumber(data?.daily_limit);
+    const company = (payload.data as { company?: { name?: unknown } } | undefined)?.company;
     return {
       ok: true,
       latencyMs,
-      message:
-        used !== null && limit !== null
-          ? `Connected — ${used}/${limit} requests used today`
-          : "Connected — token accepted",
+      message: `MCP research reachable — profile returned for ${
+        typeof company?.name === "string" ? company.name : "ITC"
+      }. REST API access is not included in the current Tapetide plan.`,
+      detail: "get_company_profile · https://mcp.tapetide.com/mcp",
     };
   } catch (error) {
-    return { ok: false, latencyMs: Date.now() - startedAt, message: redactError(error) };
+    return {
+      ok: false,
+      latencyMs: Date.now() - startedAt,
+      message: redactError(error),
+    };
   }
 }
 
@@ -205,7 +239,7 @@ export const provider: MarketDataProvider = {
   authMode: "api_token",
   requiredEnv: ["TAPETIDE_API_TOKEN"],
   notes: [
-    "Free plan: 50 successful requests per IST day (shared with its MCP server), 60 requests/minute burst.",
+    "Research is read through Tapetide's MCP server. Its REST API is not included in the Free plan (verified 2026-11-12).",
     "Tapetide terms prohibit redistribution and commercial exploitation without permission, so this provider is restricted to development use until written permission is obtained.",
     "Quotes are snapshots with their own update cadence and are always labelled DELAYED, never LIVE.",
   ],
@@ -223,7 +257,7 @@ export const provider: MarketDataProvider = {
     streaming: { supported: false, note: "No streaming feed documented" },
     fundamentals: {
       supported: true,
-      note: "Quote fundamentals + annual/quarterly statements with point-in-time availability",
+      note: "Company profile, ratios, annual/quarterly statements, shareholding, news and corporate actions via MCP",
     },
     marketStatus: { supported: false, note: "Session status is derived locally from IST exchange hours" },
   },

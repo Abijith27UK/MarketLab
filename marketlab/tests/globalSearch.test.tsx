@@ -93,4 +93,38 @@ describe("GlobalSearch", () => {
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
+  it("renders the palette outside the sidebar so navigation is never pushed", () => {
+    const { container } = render(<GlobalSearch onOpenInstrument={() => undefined} />);
+    openDialog();
+    const dialog = screen.getByRole("dialog");
+    expect(container.contains(dialog)).toBe(false);
+    expect(document.body.contains(dialog)).toBe(true);
+  });
+
+  it("clears the query from the clear button and keeps focus in the input", () => {
+    render(<GlobalSearch onOpenInstrument={() => undefined} />);
+    const input = openDialog();
+    fireEvent.change(input, { target: { value: "TCS" } });
+
+    fireEvent.click(screen.getByTestId("global-search-clear"));
+
+    const cleared = screen.getByTestId("global-search-input") as HTMLInputElement;
+    expect(cleared.value).toBe("");
+    expect(document.activeElement).toBe(cleared);
+    expect(screen.queryByTestId("global-search-clear")).toBeNull();
+  });
+
+  it("returns focus to the trigger when the palette closes", () => {
+    render(<GlobalSearch onOpenInstrument={() => undefined} />);
+    const trigger = screen.getByTestId("global-search-trigger");
+    trigger.focus();
+    fireEvent.click(trigger);
+    const input = screen.getByTestId("global-search-input");
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
 });

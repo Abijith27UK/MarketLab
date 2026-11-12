@@ -11,6 +11,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from "lightweight-charts";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { bollinger, ema, macd, rsi, sma, vwap } from "@quant/indicators";
 import type {
   Candle,
@@ -26,6 +27,19 @@ import DataModeBadge from "@/components/market/DataModeBadge";
 const IST_SHIFT_SECONDS = 5.5 * 3600;
 
 const toChartTime = (ts: number) => (ts / 1000 + IST_SHIFT_SECONDS) as UTCTimestamp;
+
+/** Canvas colours mirror the CSS tokens; lightweight-charts needs literals. */
+const COLOR = {
+  up: "#22c55e",
+  down: "#f87171",
+  line: "#2dd4bf",
+  text: "#94a3b8",
+  grid: "rgba(38, 52, 73, 0.55)",
+  border: "#263449",
+  volumeUp: "rgba(34, 197, 94, 0.32)",
+  volumeDown: "rgba(248, 113, 113, 0.32)",
+  volumeNeutral: "rgba(125, 155, 190, 0.32)",
+};
 
 export interface PriceChartProps {
   title: string;
@@ -56,6 +70,10 @@ interface HoverState {
  * Candlestick / line / OHLC-bar chart with volume, crosshair values, zoom, pan
  * and full screen. Indicator math is shared with the backend (`@quant/indicators`)
  * so the plotted values are the tested ones.
+ *
+ * The chart instance is created once per mount/height/interval and every series
+ * is removed in the same effect that added it, so switching instruments never
+ * leaks a second canvas.
  */
 export const PriceChart: React.FC<PriceChartProps> = ({
   title,
@@ -92,16 +110,17 @@ export const PriceChart: React.FC<PriceChartProps> = ({
       height,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: "#a0a0b0",
+        textColor: COLOR.text,
         fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
-        vertLines: { color: "rgba(42, 42, 58, 0.5)" },
-        horzLines: { color: "rgba(42, 42, 58, 0.5)" },
+        vertLines: { color: COLOR.grid },
+        horzLines: { color: COLOR.grid },
       },
-      rightPriceScale: { borderColor: "#2a2a3a" },
+      rightPriceScale: { borderColor: COLOR.border },
       timeScale: {
-        borderColor: "#2a2a3a",
+        borderColor: COLOR.border,
         timeVisible: interval !== "1d" && interval !== "1w" && interval !== "1M",
         secondsVisible: false,
       },
@@ -136,16 +155,16 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     const priceSeries =
       chartType === "candlestick"
         ? chart.addSeries(CandlestickSeries, {
-            upColor: "#00d4aa",
-            downColor: "#ff4757",
-            borderUpColor: "#00d4aa",
-            borderDownColor: "#ff4757",
-            wickUpColor: "#00d4aa",
-            wickDownColor: "#ff4757",
+            upColor: COLOR.up,
+            downColor: COLOR.down,
+            borderUpColor: COLOR.up,
+            borderDownColor: COLOR.down,
+            wickUpColor: COLOR.up,
+            wickDownColor: COLOR.down,
           })
         : chartType === "bar"
-          ? chart.addSeries(BarSeries, { upColor: "#00d4aa", downColor: "#ff4757" })
-          : chart.addSeries(LineSeries, { color: "#00d4aa", lineWidth: 2 });
+          ? chart.addSeries(BarSeries, { upColor: COLOR.up, downColor: COLOR.down })
+          : chart.addSeries(LineSeries, { color: COLOR.line, lineWidth: 2 });
 
     priceSeries.setData(
       candles.map((candle) => ({
@@ -165,7 +184,7 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
-      color: "rgba(122, 162, 247, 0.4)",
+      color: COLOR.volumeNeutral,
     });
     volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     volumeSeries.setData(
@@ -174,7 +193,12 @@ export const PriceChart: React.FC<PriceChartProps> = ({
         .map((candle) => ({
           time: toChartTime(candle.ts),
           value: candle.volume as number,
-          color: candle.close >= candle.open ? "rgba(0, 212, 170, 0.35)" : "rgba(255, 71, 87, 0.35)",
+          color:
+            candle.close > candle.open
+              ? COLOR.volumeUp
+              : candle.close < candle.open
+                ? COLOR.volumeDown
+                : COLOR.volumeNeutral,
         }))
     );
 
@@ -213,32 +237,32 @@ export const PriceChart: React.FC<PriceChartProps> = ({
       const period = indicator.period ?? 14;
       switch (indicator.name) {
         case "SMA":
-          addLine(sma(closes, period || 20), { color: "#f0b429" });
+          addLine(sma(closes, period || 20), { color: "#fbbf24" });
           break;
         case "EMA":
-          addLine(ema(closes, period || 20), { color: "#7aa2f7" });
+          addLine(ema(closes, period || 20), { color: "#60a5fa" });
           break;
         case "BOLLINGER": {
           const bands = bollinger(closes, period || 20, indicator.multiplier ?? 2);
-          addLine(bands.upper, { color: "#b48ead", dashed: true });
-          addLine(bands.middle, { color: "#b48ead" });
-          addLine(bands.lower, { color: "#b48ead", dashed: true });
+          addLine(bands.upper, { color: "#c084fc", dashed: true });
+          addLine(bands.middle, { color: "#c084fc" });
+          addLine(bands.lower, { color: "#c084fc", dashed: true });
           break;
         }
         case "VWAP":
-          addLine(vwap(candles), { color: "#ffb86c" });
+          addLine(vwap(candles), { color: "#fb923c" });
           break;
         case "RSI": {
-          addLine(rsi(closes, period || 14), { color: "#f0b429", pane: 1 });
-          addLine(closes.map(() => 70), { color: "#4a4a5e", dashed: true, pane: 1 });
-          addLine(closes.map(() => 30), { color: "#4a4a5e", dashed: true, pane: 1 });
+          addLine(rsi(closes, period || 14), { color: "#fbbf24", pane: 1 });
+          addLine(closes.map(() => 70), { color: "#334155", dashed: true, pane: 1 });
+          addLine(closes.map(() => 30), { color: "#334155", dashed: true, pane: 1 });
           break;
         }
         case "MACD": {
           const result = macd(closes, indicator.fast ?? 12, indicator.slow ?? 26, indicator.signal ?? 9);
-          addLine(result.macd, { color: "#7aa2f7", pane: 2 });
-          addLine(result.signal, { color: "#f0b429", pane: 2 });
-          addLine(result.histogram, { color: "#5b6b8c", pane: 2 });
+          addLine(result.macd, { color: "#60a5fa", pane: 2 });
+          addLine(result.signal, { color: "#fbbf24", pane: 2 });
+          addLine(result.histogram, { color: "#475569", pane: 2 });
           break;
         }
         default:
@@ -308,40 +332,47 @@ export const PriceChart: React.FC<PriceChartProps> = ({
     : null);
 
   return (
-    <section className="ml-chart-wrap" ref={wrapperRef}>
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-800 px-4 py-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-base font-semibold">{title}</h2>
+    <section className="ml-chart-wrap" ref={wrapperRef} aria-label={`${title} price chart`}>
+      <header className="ml-chart__head">
+        <div className="ml-chart__titles">
+          <h2 className="ml-chart__title">
+            {title}
             <DataModeBadge mode={mode} />
-          </div>
-          {subtitle && <p className="text-xs text-gray-500">{subtitle}</p>}
+          </h2>
+          {subtitle && <p className="ml-chart__subtitle">{subtitle}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {toolbar}
           <button
             type="button"
             onClick={toggleFullscreen}
-            className="rounded border border-gray-700 px-2 py-1 text-xs text-gray-300 hover:bg-gray-800"
+            className="ml-data-table__action text-[var(--text-3)]"
             aria-label={isFullscreen ? "Exit full screen" : "Enter full screen"}
           >
-            {isFullscreen ? "Exit full screen" : "Full screen"}
+            {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            <span>{isFullscreen ? "Exit" : "Full screen"}</span>
           </button>
         </div>
       </header>
 
       {shown && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 px-4 py-2 text-xs text-gray-400">
-          <span>O <b className="text-gray-200">{formatPrice(shown.open)}</b></span>
-          <span>H <b className="text-gray-200">{formatPrice(shown.high)}</b></span>
-          <span>L <b className="text-gray-200">{formatPrice(shown.low)}</b></span>
-          <span>C <b className="text-gray-200">{formatPrice(shown.close)}</b></span>
-          <span>Vol <b className="text-gray-200">{formatVolume(shown.volume)}</b></span>
-          {enabled.size > 0 && (
-            <span className="text-gray-600">
-              Overlays: {[...enabled].join(", ")}
-            </span>
-          )}
+        <div className="ml-chart__legend">
+          <span>
+            O <b>{formatPrice(shown.open)}</b>
+          </span>
+          <span>
+            H <b>{formatPrice(shown.high)}</b>
+          </span>
+          <span>
+            L <b>{formatPrice(shown.low)}</b>
+          </span>
+          <span>
+            C <b>{formatPrice(shown.close)}</b>
+          </span>
+          <span>
+            Vol <b>{formatVolume(shown.volume)}</b>
+          </span>
+          {enabled.size > 0 && <span>Overlays: {[...enabled].join(", ")}</span>}
         </div>
       )}
 
@@ -349,25 +380,25 @@ export const PriceChart: React.FC<PriceChartProps> = ({
         <div className="ml-chart-plot" ref={containerRef} style={{ height }} />
 
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-gray-300">
+          <div className="ml-chart__state" role="status">
             Loading candles…
           </div>
         )}
         {!loading && error && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/50 p-6 text-center text-sm text-red-400">
+          <div className="ml-chart__state ml-chart__state--error" role="alert">
             {error}
           </div>
         )}
         {!loading && !error && candles.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-gray-400">
-            {emptyMessage}
-          </div>
+          <div className="ml-chart__state">{emptyMessage}</div>
         )}
       </div>
 
-      <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-800 px-4 py-2 text-xs text-gray-500">
+      <footer className="ml-chart__foot">
         <span>Source: {source === "sample" ? "sample catalogue" : source} · times in IST</span>
-        <span>{candles.length} candles</span>
+        <span>
+          {candles.length} candles · {chartType === "line" ? "line" : chartType === "bar" ? "OHLC bars" : "candlesticks"}
+        </span>
       </footer>
     </section>
   );

@@ -1,22 +1,36 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useRootContext } from "@/context/RootContext";
-import { Card, Button } from "@/components/ui";
+import { Button, Card } from "@/components/ui";
+import SectionHeader from "@/components/ui/section-header";
 import AuthPanel from "@/components/AuthPanel";
 import BackendRequired from "@/components/system/BackendRequired";
 import PaperSummary from "@/components/paper/PaperSummary";
 import PositionsTable from "@/components/paper/PositionsTable";
 import OrdersTable from "@/components/paper/OrdersTable";
 import OrderTicket, { type TicketSubmission } from "@/components/paper/OrderTicket";
+import PriceChart from "@/components/chart/PriceChart";
+import DataModeBadge from "@/components/market/DataModeBadge";
+import PriceChange from "@/components/market/PriceChange";
 import { useQuotes } from "@/hooks/useQuotes";
-import { marketApi } from "@/lib/marketClient";
+import {
+  INTERVALS,
+  INTERVAL_LABEL,
+  marketApi,
+  type CandleResult,
+  type IndicatorConfig,
+  type Interval,
+} from "@/lib/marketClient";
 import { instrumentIdOf } from "@/lib/stockModels";
-import { formatPrice } from "@/lib/format";
+import { formatAge, formatPrice, formatSignedInr, formatVolume, toneClass } from "@/lib/format";
 
 interface TradingProps {
   onOpenInstrument: (instrumentId: string) => void;
 }
+
+/** Stable identity so the chart's series effect does not rebuild every render. */
+const TRADE_INDICATORS: IndicatorConfig[] = [{ name: "SMA", enabled: true, period: 20 }];
 
 /**
  * Simulated order entry.
@@ -33,14 +47,20 @@ const TradingLive: React.FC<TradingProps> = ({ onOpenInstrument }) => {
   const placeOrder = useMutation(api.paper.placeOrder);
   const cancelOrder = useMutation(api.paper.cancelOrder);
   const recheckOrder = useMutation(api.paper.recheckOrder);
+  const getCandles = useAction(marketApi.getCandles);
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedInstrumentId, setSelectedInstrumentId] = useState("");
+  const [chartInterval, setChartInterval] = useState<Interval>("1d");
+  const [series, setSeries] = useState<CandleResult | null>(null);
+  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesError, setSeriesError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
+  const requestRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -85,9 +105,33 @@ const TradingLive: React.FC<TradingProps> = ({ onOpenInstrument }) => {
   });
   const quote = quotes.data?.quotes[0] ?? null;
 
-  const position = summary?.positions.find(
-    (item) => item.instrumentId === selectedInstrumentId
-  );
+  const position = summary?.positions.find((item) => item.instrumentId === selectedInstrumentId);
+  const selected = instruments.find((item) => item.instrumentId === selectedInstrumentId) ?? null;
+
+  // Candles for the selected instrument, ignoring responses that arrive late.
+  useEffect(() => {
+    if (!selectedInstrumentId) {
+      setSeries(null);
+      setSeriesError(null);
+      return;
+    }
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    setSeriesLoading(true);
+    setSeriesError(null);
+    getCandles({ instrumentId: selectedInstrumentId, interval: chartInterval })
+      .then((result) => {
+        if (requestRef.current === request) setSeries(result);
+      })
+      .catch((error) => {
+        if (requestRef.current !== request) return;
+        setSeries(null);
+        setSeriesError(error instanceof Error ? error.message : "Could not load candles");
+      })
+      .finally(() => {
+        if (requestRef.current === request) setSeriesLoading(false);
+      });
+  }, [chartInterval, getCandles, selectedInstrumentId]);
 
   const submitOrder = async (submission: TicketSubmission) => {
     setSubmitting(true);
@@ -128,7 +172,9 @@ const TradingLive: React.FC<TradingProps> = ({ onOpenInstrument }) => {
     setPageNotice(null);
     try {
       const result =
-        action === "cancel" ? await cancelOrder({ orderId: orderId as never }) : await recheckOrder({ orderId: orderId as never });
+        action === "cancel"
+          ? await cancelOrder({ orderId: orderId as never })
+          : await recheckOrder({ orderId: orderId as never });
       setPageNotice(
         result.status === "FILLED"
           ? "The limit condition is now met — the order filled and the ledger was updated."
@@ -142,7 +188,13 @@ const TradingLive: React.FC<TradingProps> = ({ onOpenInstrument }) => {
   };
 
   if (loading) {
-    return <div className="p-6 text-gray-400">Loading paper account…</div>;
+    return (
+      <div className="p-4 md:p-6" aria-busy="true">
+        <span className="skeleton" style={{ display: "block", height: 26, width: 160 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 96 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 320 }} />
+      </div>
+    );
   }
 
   if (!isAuthenticated) {
@@ -162,9 +214,9 @@ const TradingLive: React.FC<TradingProps> = ({ onOpenInstrument }) => {
 
   if (summary === undefined) {
     return (
-      <div className="p-4 md:p-6">
-        <div className="skeleton mb-4 h-24 w-full rounded-xl" />
-        <div className="skeleton h-64 w-full rounded-xl" />
+      <div className="p-4 md:p-6" aria-busy="true">
+        <span className="skeleton" style={{ display: "block", height: 96 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 320 }} />
       </div>
     );
   }
@@ -173,95 +225,216 @@ const TradingLive: React.FC<TradingProps> = ({ onOpenInstrument }) => {
     return (
       <div className="p-4 md:p-6">
         <h1 className="ml-page-title">Trading</h1>
-        <p className="ml-page-sub">Creating your simulated account with ₹1,00,000 of virtual capital…</p>
-        {pageError && <p className="mt-3 text-sm text-red-400">{pageError}</p>}
+        <p className="ml-page-sub">
+          Creating your simulated account with ₹1,00,000 of virtual capital…
+        </p>
+        {pageError && (
+          <p className="ml-field-error mt-3" role="alert">
+            {pageError}
+          </p>
+        )}
       </div>
     );
   }
 
   return (
     <div className="p-4 md:p-6">
-      <header className="ml-page-head">
-        <div>
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="ml-page-title">Trading</h1>
           <p className="ml-page-sub">
             Paper orders against labelled prices. Cash, positions and P&amp;L are computed by the
             backend and persisted in an auditable ledger.
           </p>
         </div>
-        <div className="ml-page-head-side">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="ml-badge">PAPER ONLY</span>
-          <p className="text-xs text-gray-500">Live trading stays disabled until a broker is connected.</p>
+          <span className="text-[11px] text-[var(--text-3)]">
+            Live trading stays disabled until a broker is connected.
+          </span>
         </div>
       </header>
 
       <PaperSummary summary={summary} compact />
 
       {pageError && (
-        <p className="ml-inline-error" role="alert">
+        <p className="ml-field-error mt-3" role="alert">
           {pageError}
         </p>
       )}
       {pageNotice && (
-        <p className="ml-inline-notice" role="status">
+        <p className="ml-ticket__notice mt-3" role="status">
           {pageNotice}
         </p>
       )}
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(320px,380px)_1fr]">
-        <OrderTicket
-          instruments={instruments}
-          search={search}
-          onSearch={setSearch}
-          selectedInstrumentId={selectedInstrumentId}
-          onSelectInstrument={setSelectedInstrumentId}
-          quote={quote}
-          quoteLoading={quotes.loading && !quotes.data}
-          availableCash={summary.totals.availableCash}
-          reservedCash={summary.totals.reservedCash}
-          sellableQuantity={position?.quantity ?? 0}
-          sampleFillsEnabled={summary.sampleFillsEnabled}
-          submitting={submitting}
-          onSubmit={submitOrder}
-        />
+      <div className="ml-trade-grid mt-5">
+        <div className="ml-trade-main">
+          <Card>
+            <div className="ml-trade-ctx">
+              <div className="min-w-0">
+                <div className="ml-detail-tags">
+                  <h2 className="ml-trade-ctx__symbol">
+                    {selected?.symbol ?? "Choose an instrument"}
+                  </h2>
+                  {selected && (
+                    <span className="ml-data-table__exchange">{selected.exchange}</span>
+                  )}
+                  {quote && <DataModeBadge mode={quote.mode} source={quote.source} />}
+                </div>
+                <p className="ml-detail-name">
+                  {selected?.name ?? "Search on the right, then pick a stock to simulate an order."}
+                </p>
+                {position ? (
+                  <p className="ml-trade-ctx__meta">
+                    Holding {position.quantity} @ ₹{formatPrice(position.averageCost)} ·{" "}
+                    <span className={toneClass(position.unrealizedPnl)}>
+                      {formatSignedInr(position.unrealizedPnl)}
+                    </span>
+                  </p>
+                ) : (
+                  <p className="ml-trade-ctx__meta">No open position in this instrument.</p>
+                )}
+              </div>
 
-        <Card>
-          <div className="ml-section-head">
-            <div>
-              <h2 className="ml-section-title">Open positions</h2>
-              <p className="ml-section-sub">
-                Valued at the eligible price for each instrument, with its freshness label.
-              </p>
+              <div className="ml-detail-quote">
+                <span className={`ml-detail-quote__price ml-mono ${toneClass(quote?.change)}`}>
+                  {quote ? `₹${formatPrice(quote.lastPrice)}` : "—"}
+                </span>
+                {quote ? (
+                  <PriceChange
+                    change={quote.change}
+                    changePercent={quote.changePercent}
+                    showAbsolute
+                  />
+                ) : (
+                  <span className="text-[11px] text-[var(--text-3)]">
+                    {quotes.loading ? "Loading quote…" : "No quote available"}
+                  </span>
+                )}
+                {quote && (
+                  <span className="ml-detail-quote__meta">
+                    Vol {formatVolume(quote.volume)} ·{" "}
+                    {formatAge(quote.quoteTime, Date.now())}
+                  </span>
+                )}
+                {selected && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onOpenInstrument(selectedInstrumentId)}
+                  >
+                    Open chart
+                  </Button>
+                )}
+              </div>
             </div>
-            <Button variant="secondary" size="sm" onClick={() => onOpenInstrument(selectedInstrumentId)}>
-              Open chart
-            </Button>
+          </Card>
+
+          <div className="ml-chip-row mt-4" role="group" aria-label="Chart timeframe">
+            {INTERVALS.map((choice) => (
+              <button
+                key={choice}
+                type="button"
+                className="ml-chip"
+                aria-pressed={chartInterval === choice}
+                onClick={() => setChartInterval(choice)}
+              >
+                {INTERVAL_LABEL[choice]}
+              </button>
+            ))}
           </div>
-          <PositionsTable positions={summary.positions} onOpenInstrument={onOpenInstrument} />
-        </Card>
+
+          <div className="mt-3">
+            <PriceChart
+              title={`${selected?.symbol ?? "Instrument"} · ${INTERVAL_LABEL[chartInterval]}`}
+              subtitle={
+                series
+                  ? `${series.quality.rowCount} candles · ${series.quality.gaps} gaps · source ${series.source}`
+                  : undefined
+              }
+              candles={series?.candles ?? []}
+              interval={chartInterval}
+              chartType="candlestick"
+              indicators={TRADE_INDICATORS}
+              mode={series?.mode ?? "SAMPLE"}
+              source={series?.source ?? "sample"}
+              loading={seriesLoading}
+              error={seriesError}
+              emptyMessage="No candles are available for this instrument yet."
+              height={340}
+            />
+          </div>
+
+          <Card className="mt-4">
+            <SectionHeader
+              title="Your holdings"
+              description="Valued at the eligible price for each instrument, with its freshness label."
+              actions={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onOpenInstrument(selectedInstrumentId)}
+                  disabled={!selectedInstrumentId}
+                >
+                  Open chart
+                </Button>
+              }
+            />
+            <div className="mt-3">
+              <PositionsTable
+                positions={summary.positions}
+                onOpenInstrument={onOpenInstrument}
+                emptyMessage="Filled buys appear here. Place a paper order to open your first position."
+              />
+            </div>
+          </Card>
+        </div>
+
+        <div className="ml-trade-side">
+          <OrderTicket
+            instruments={instruments}
+            search={search}
+            onSearch={setSearch}
+            selectedInstrumentId={selectedInstrumentId}
+            onSelectInstrument={setSelectedInstrumentId}
+            quote={quote}
+            quoteLoading={quotes.loading && !quotes.data}
+            availableCash={summary.totals.availableCash}
+            reservedCash={summary.totals.reservedCash}
+            sellableQuantity={position?.quantity ?? 0}
+            sampleFillsEnabled={summary.sampleFillsEnabled}
+            submitting={submitting}
+            onSubmit={submitOrder}
+          />
+        </div>
       </div>
 
-      <Card className="mt-6">
-        <div className="ml-section-head">
-          <div>
-            <h2 className="ml-section-title">Order history</h2>
-            <p className="ml-section-sub">
-              Rejected and cancelled orders are kept so every balance change stays explainable.
-            </p>
-          </div>
-        </div>
-        {orders === undefined ? (
-          <p className="ml-empty">Loading orders…</p>
-        ) : (
-          <OrdersTable
-            orders={orders}
-            busyOrderId={busyOrderId}
-            onCancel={(orderId) => void actOnOrder(orderId, "cancel")}
-            onRecheck={(orderId) => void actOnOrder(orderId, "recheck")}
-            emptyMessage="No simulated orders yet. Use the ticket to place one."
+      <section className="mt-5">
+        <Card>
+          <SectionHeader
+            title="Order history"
+            description="Rejected and cancelled orders are kept so every balance change stays explainable. Nothing here was sent to a broker."
           />
-        )}
-      </Card>
+          <div className="mt-3">
+            {orders === undefined ? (
+              <div className="flex flex-col gap-2" aria-busy="true">
+                {Array.from({ length: 4 }).map((_, index) => (
+                  <span key={index} className="skeleton" style={{ height: 32 }} />
+                ))}
+              </div>
+            ) : (
+              <OrdersTable
+                orders={orders}
+                busyOrderId={busyOrderId}
+                onCancel={(orderId) => void actOnOrder(orderId, "cancel")}
+                onRecheck={(orderId) => void actOnOrder(orderId, "recheck")}
+                emptyMessage="No simulated orders yet. Use the ticket to place one."
+              />
+            )}
+          </div>
+        </Card>
+      </section>
     </div>
   );
 };

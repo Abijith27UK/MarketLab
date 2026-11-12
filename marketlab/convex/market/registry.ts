@@ -20,6 +20,7 @@ import { provider as fyers } from "./providers/fyers";
 import { provider as breeze } from "./providers/breeze";
 import { provider as tapetide } from "./providers/tapetide";
 import { provider as tejhq } from "./providers/tejhq";
+import { provider as nsemcp } from "./providers/nsemcp";
 
 /**
  * Priority order used when more than one provider is configured.
@@ -28,9 +29,12 @@ import { provider as tejhq } from "./providers/tejhq";
  * feed (intraday, quotes, streaming) should always win, while TejHQ remains the
  * zero-setup source for daily history and instrument masters.
  */
-export const PROVIDER_PRIORITY: ProviderId[] = ["fyers", "breeze", "tapetide", "tejhq"];
+export const PROVIDER_PRIORITY: ProviderId[] = ["fyers", "breeze", "tapetide", "nsemcp", "tejhq"];
 
-export const ALL_PROVIDERS: MarketDataProvider[] = [fyers, breeze, tapetide, tejhq];
+export const ALL_PROVIDERS: MarketDataProvider[] = [fyers, breeze, tapetide, nsemcp, tejhq];
+
+/** Providers a user may pick as their informational quote source. */
+export const SELECTABLE_QUOTE_PROVIDERS: ProviderId[] = ["tejhq", "nsemcp"];
 
 export function getProvider(id: string): MarketDataProvider | undefined {
   return ALL_PROVIDERS.find((provider) => provider.id === id);
@@ -90,6 +94,10 @@ export function providerFor(
 
   for (const provider of ordered) {
     if (!provider) continue;
+    // The experimental NSE history feed is opt-in only: an unqualified candle
+    // request keeps using the established default so backtests and existing
+    // charts are never silently moved onto the experiment.
+    if (!preferred && capability === "candles" && provider.id === "nsemcp") continue;
     if (!provider.isConfigured(env).configured) continue;
     if (!supports(provider, capability, interval)) continue;
     return provider;

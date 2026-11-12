@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { action, mutation, query } from "./_generated/server";
+import { action, internalAction, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -42,6 +42,8 @@ import {
   TAPETIDE_RATE_LIMIT_PER_MINUTE,
 } from "./market/providers/tapetide";
 import { TEJHQ_RATE_LIMIT_PER_MINUTE } from "./market/providers/tejhq";
+import { NSE_MCP_RATE_LIMIT_PER_MINUTE } from "./market/providers/nsemcp";
+import { DASHBOARD_INDEX_DEFINITIONS } from "./market/indexCatalogue";
 // Type-only contract for the action results. These annotations are what keep the
 // generated `api.d.ts` acyclic: without them the return types of actions that call
 // `internal.*` are inferred through the API object they are part of, and
@@ -114,6 +116,7 @@ const RATE_LIMIT: Record<ProviderId, number> = {
   breeze: BREEZE_RATE_LIMIT_PER_MINUTE,
   tapetide: TAPETIDE_RATE_LIMIT_PER_MINUTE,
   tejhq: TEJHQ_RATE_LIMIT_PER_MINUTE,
+  nsemcp: NSE_MCP_RATE_LIMIT_PER_MINUTE,
 };
 
 const DAILY_LIMIT: Partial<Record<ProviderId, number>> = {
@@ -160,20 +163,27 @@ function labelQuote(
   quote: NormalizedQuote,
   context: { nowMs: number; fetchedAt: number; marketOpen: boolean }
 ): NormalizedQuote {
+  // A provider timestamp materially ahead of the server clock cannot describe a
+  // real quote age; drop it (the UI then says "no quote timestamp") instead of
+  // presenting it as fresh. No replacement timestamp is manufactured.
+  const quoteTime =
+    quote.quoteTime !== null && quote.quoteTime > context.nowMs + 5 * 60_000
+      ? null
+      : quote.quoteTime;
   const mode = classifyQuoteMode({
     source: quote.source,
     // Tapetide publishes delayed snapshots and TejHQ is end-of-day: neither may
     // ever be upgraded to LIVE by the freshness rules.
     providerMode:
       quote.source === "tapetide" || quote.source === "tejhq" ? "DELAYED" : undefined,
-    quoteTime: quote.quoteTime,
+    quoteTime,
     fetchedAt: context.fetchedAt,
     nowMs: context.nowMs,
     ttlMs: QUOTE_LABEL_TTL_MS,
     marketOpen: context.marketOpen,
     maxLiveAgeMs: MAX_LIVE_TICK_AGE_MS,
   });
-  return { ...quote, mode, eod: isEndOfDaySource(quote.source) };
+  return { ...quote, quoteTime, mode, eod: isEndOfDaySource(quote.source) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -242,19 +252,35 @@ export const searchInstruments = query({
       };
     }
 
-    const page = await ctx.db.query("instruments").withIndex("by_symbol").paginate({
-      numItems: limit,
-      cursor: args.cursor ?? null,
-    });
-    const items = page.page.filter((row) => {
-      if (exchange !== "ALL" && row.exchange !== exchange) return false;
-      if (instrumentType !== "ALL" && row.instrumentType !== instrumentType) return false;
-      return true;
-    });
+    // Browse pages are symbol-ordered, so a filtered page can easily contain no
+    // matching row (that is why INDEX used to render "no index instruments"
+    // even when index rows existed). Scan forward until the page is full or the
+    // catalogue ends, bounded so a sparse filter cannot walk the whole table.
+    let cursor = args.cursor ?? null;
+    let pageDone = false;
+    let continueCursor: string | null = null;
+    const items: Doc<"instruments">[] = [];
+    for (let pageIndex = 0; pageIndex < 5; pageIndex += 1) {
+      const page = await ctx.db.query("instruments").withIndex("by_symbol").paginate({
+        numItems: limit,
+        cursor,
+      });
+      items.push(
+        ...page.page.filter((row) => {
+          if (exchange !== "ALL" && row.exchange !== exchange) return false;
+          if (instrumentType !== "ALL" && row.instrumentType !== instrumentType) return false;
+          return true;
+        })
+      );
+      pageDone = page.isDone;
+      continueCursor = page.continueCursor;
+      cursor = page.continueCursor;
+      if (items.length >= limit || pageDone) break;
+    }
     return {
-      items,
-      nextCursor: page.isDone ? null : page.continueCursor,
-      isDone: page.isDone,
+      items: items.slice(0, limit),
+      nextCursor: pageDone ? null : continueCursor,
+      isDone: pageDone || items.length >= limit,
       mode: "browse" as const,
     };
   },
@@ -295,6 +321,81 @@ export const catalogueStats = query({
       provider: rows.length - sample,
       lastUpdated: lastUpdated || null,
     };
+  },
+});
+
+/**
+ * Dashboard index list: six verified NSE index identities.
+ *
+ * Reads catalogue rows when present and falls back to the definition so the
+ * cards appear even before the (tiny) index seed runs. It never requires the
+ * 2,900-row equity master, and it never fabricates a level.
+ */
+export const dashboardIndices = query({
+  args: {},
+  handler: async (ctx) => {
+    const items: Doc<"instruments">[] = [];
+    for (const definition of DASHBOARD_INDEX_DEFINITIONS) {
+      const instrumentId = makeInstrumentId(definition.exchange, definition.symbol, "INDEX");
+      const row = await ctx.db
+        .query("instruments")
+        .withIndex("by_instrument_id", (q) => q.eq("instrumentId", instrumentId))
+        .first();
+      if (row) {
+        items.push(row);
+        continue;
+      }
+      items.push({
+        _id: `index-definition:${instrumentId}` as unknown as Doc<"instruments">["_id"],
+        _creationTime: 0,
+        symbol: definition.symbol,
+        name: definition.name,
+        exchange: definition.exchange,
+        instrumentType: "INDEX",
+        sector: "Index",
+        dataSource: "catalogue",
+        isSampleData: false,
+        lastUpdated: 0,
+        instrumentId,
+        tradingSymbol: `${definition.exchange}:${definition.symbol}-INDEX`,
+        segment: "INDEX",
+        isin: undefined,
+        tickSize: null,
+        lotSize: null,
+        isActive: true,
+        providerIds: { nsemcp: definition.nseName },
+      });
+    }
+    return { items };
+  },
+});
+
+/**
+ * Curated dashboard stocks, resolved in the caller's order.
+ *
+ * "Top stocks" is a highlight grid, not a catalogue page: alphabetical ordering
+ * of the first page is not a meaningful selection. Missing symbols are reported
+ * instead of being replaced by whatever sorts first.
+ */
+export const featuredInstruments = query({
+  args: { symbols: v.array(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(Math.max(1, args.limit ?? 8), 12);
+    const items: Doc<"instruments">[] = [];
+    const missing: string[] = [];
+    for (const requested of args.symbols.slice(0, limit)) {
+      const symbol = requested.trim().toUpperCase();
+      const matches = await ctx.db
+        .query("instruments")
+        .withIndex("by_exchange_symbol", (q) => q.eq("exchange", "NSE").eq("symbol", symbol))
+        .collect();
+      const row =
+        matches.find((entry) => entry.instrumentType === "EQUITY") ??
+        matches.find((entry) => entry.instrumentType === "ETF");
+      if (row) items.push(row);
+      else missing.push(symbol);
+    }
+    return { items, missing };
   },
 });
 
@@ -342,10 +443,19 @@ export const getQuotes = action({
         mode: "SAMPLE" as DataMode,
         source: "sample",
         asOf: now,
+        quoteAsOf: null,
+        retrievedAt: now,
+        quoteProvider: null,
         session: marketSession(now, holidaysForEmpty),
         note: null,
         warning: null,
       };
+    }
+
+    // Index rows are reference data, not part of the equity master: make sure
+    // the six dashboard indices exist before reading them (idempotent, 6 rows).
+    if (ids.some((id) => id.endsWith(":INDEX"))) {
+      await ctx.runMutation(internal.marketStore.ensureIndexInstruments, {});
     }
 
     const rows = await ctx.runQuery(internal.marketStore.instrumentsByIds, { ids });
@@ -358,16 +468,33 @@ export const getQuotes = action({
 
     const userId = await ctx.runQuery(internal.marketStore.currentUserId, {});
     const env = readEnv();
-    const provider = userId ? providerFor(env, "quotes") : null;
+    const preferred = userId
+      ? await ctx.runQuery(internal.marketStore.preferredQuoteProvider, {})
+      : null;
+    const requested: ProviderId = preferred ?? "tejhq";
 
-    const cachedRows = await ctx.runQuery(internal.marketStore.quotesByInstrumentIds, { ids });
+    let provider = providerFor(env, "quotes", undefined, requested);
+    let warning: string | null = null;
+    // Never render another provider's cached values under the selected name.
+    // If the requested provider cannot serve, say so and fall back to the
+    // visible default rather than pretending the selection worked.
+    if (requested === "nsemcp" && provider?.id !== "nsemcp") {
+      warning =
+        "NSE MCP is disabled or unavailable on this deployment — showing TejHQ end-of-day data instead. Enable NSE_MCP_POC_ENABLED and run Test connection on Data Sources.";
+      provider = providerFor(env, "quotes", undefined, "tejhq");
+    }
+
+    const cacheSource = provider?.id ?? requested;
+    const cachedRows = await ctx.runQuery(internal.marketStore.quotesByInstrumentIds, {
+      ids,
+      source: cacheSource,
+    });
     const cachedById = new Map(cachedRows.map((row) => [row.instrumentId, row]));
 
-    let warning: string | null = null;
     let note: string | null = null;
     const quotesById = new Map<string, NormalizedQuote>();
 
-    for (const row of cachedRows) {
+    for (const row of cachedById.values()) {
       const cached: NormalizedQuote = {
         instrumentId: row.instrumentId,
         symbol: row.symbol,
@@ -503,11 +630,18 @@ export const getQuotes = action({
 
     const modes = quotes.map((quote) => quote.mode);
     const source = quotes.find((quote) => quote.source !== "sample")?.source ?? "sample";
+    // The newest provider-reported quote timestamp. This — not the request time —
+    // is what a freshness label may describe.
+    const quoteAsOf =
+      quotes.reduce((latest, quote) => Math.max(latest, quote.quoteTime ?? 0), 0) || null;
     return {
       quotes,
       mode: overallMode(modes),
       source,
       asOf: now,
+      quoteAsOf,
+      retrievedAt: now,
+      quoteProvider: provider?.id ?? null,
       session,
       note,
       warning,
@@ -545,6 +679,8 @@ export const getCandles = action({
     interval: intervalArg,
     fromMs: v.optional(v.number()),
     toMs: v.optional(v.number()),
+    /** Explicit chart-history source; defaults to the user's saved preference. */
+    source: v.optional(v.union(v.literal("tejhq"), v.literal("nsemcp"))),
   },
   handler: async (ctx, args): Promise<CandleResult> => {
     const now = Date.now();
@@ -563,7 +699,19 @@ export const getCandles = action({
       | Id<"users">
       | null;
     const env = readEnv();
-    const provider = userId ? providerFor(env, "candles", interval) : null;
+    const preferredChartSource = userId
+      ? await ctx.runQuery(internal.marketStore.preferredChartSource, {})
+      : null;
+    const requestedSource = args.source ?? preferredChartSource ?? "tejhq";
+    const provider = userId ? providerFor(env, "candles", interval, requestedSource) : null;
+
+    // An explicitly requested source must never be silently swapped for a
+    // different provider: report it instead.
+    if (args.source && provider && provider.id !== args.source) {
+      throw new Error(
+        `${provider.label} cannot serve ${interval} candles. Choose a supported chart source instead.`
+      );
+    }
 
     const cached = await ctx.runQuery(internal.marketStore.latestDataset, {
       instrumentId: instrument.instrumentId,
@@ -572,6 +720,7 @@ export const getCandles = action({
       fromMs,
       toMs,
       limit: MAX_CANDLES,
+      source: requestedSource,
     });
 
     const cacheIsFresh =
@@ -671,7 +820,9 @@ export const getCandles = action({
               note:
                 provider.id === "tejhq"
                   ? "End-of-day (EOD) daily bars from TejHQ — completed sessions only, not intraday data."
-                  : null,
+                  : provider.id === "nsemcp"
+                    ? "Daily OHLCV from the NSE Bhavcopy MCP server — completed sessions only, prices unadjusted for splits/bonus."
+                    : null,
               warning: null as string | null,
               quality: {
                 rowCount: normalized.length,
@@ -845,6 +996,7 @@ export const providerOverview = action({
     });
     const catalogue = await ctx.runQuery(internal.marketStore.catalogueCounts, {});
     const coverage = await ctx.runQuery(internal.marketStore.dataCoverage, {});
+    const preferred = await ctx.runQuery(internal.marketStore.preferredQuoteProvider, {});
     const intervals = availableIntervals(env);
     const features = featureDataModes(
       {
@@ -885,6 +1037,13 @@ export const providerOverview = action({
       catalogue,
       coverage,
       features,
+      preferredQuoteProvider: preferred ?? "tejhq",
+      preferredChartSource: (await ctx.runQuery(internal.marketStore.preferredChartSource, {})) ?? "tejhq",
+      chartSources: {
+        tejhq: providerFor(env, "candles", "1d", "tejhq")?.id === "tejhq",
+        nsemcp: providerFor(env, "candles", "1d", "nsemcp")?.id === "nsemcp",
+      },
+      nseMcpEnabled: statuses.find((status) => status.providerId === "nsemcp")?.configured ?? false,
       hasConfiguredProvider: statuses.some((status) => status.configured),
       providerCount: ALL_PROVIDERS.length,
     };
@@ -1028,6 +1187,81 @@ export const syncInstruments = action({
       });
       throw new Error(message);
     }
+  },
+});
+
+/* ------------------------------------------------------------------ */
+/* Catalogue bootstrap (admin CLI, no user session)                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Seeds/refreshes the shared instrument catalogue from the configured master
+ * provider. Invoked from the CLI (`npx convex run marketData:syncCatalogue`),
+ * not from the browser: it is reference-data maintenance, not a user action.
+ * Idempotent — existing rows keep their `_id`, so watchlists and research links
+ * survive a refresh.
+ */
+export const syncCatalogue = internalAction({
+  args: { exchanges: v.optional(v.array(exchangeArg)) },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ providerId: string; total: number; inserted: number; updated: number }> => {
+    const env = readEnv();
+    const provider = providerFor(env, "instrumentSync");
+    if (!provider?.fetchInstrumentMaster) {
+      throw new Error("No provider is configured for instrument synchronisation.");
+    }
+    const quota = await ctx.runMutation(internal.marketStore.consumeProviderQuota, {
+      providerId: provider.id,
+      limitPerMinute: RATE_LIMIT[provider.id],
+      limitPerDay: DAILY_LIMIT[provider.id],
+    });
+    if (!quota.allowed) {
+      throw new Error(`Rate limit reached — retry in ${Math.ceil(quota.retryAfterMs / 1000)}s.`);
+    }
+
+    const exchanges = args.exchanges ?? ["NSE"];
+    const startedAt = Date.now();
+    const master = await provider.fetchInstrumentMaster(env, { exchanges, limit: 3000 });
+    if (master.length === 0) {
+      throw new Error("Provider returned an empty instrument master — existing data was left untouched.");
+    }
+
+    let inserted = 0;
+    let updated = 0;
+    for (let i = 0; i < master.length; i += 200) {
+      const chunk = master.slice(i, i + 200);
+      const result = await ctx.runMutation(internal.marketStore.upsertInstrumentMaster, {
+        instruments: chunk.map((instrument) => ({
+          instrumentId: instrument.instrumentId,
+          symbol: instrument.symbol,
+          tradingSymbol: instrument.tradingSymbol,
+          name: instrument.name,
+          exchange: instrument.exchange,
+          instrumentType: instrument.instrumentType,
+          segment: instrument.segment,
+          providerIds: instrument.providerIds,
+          isin: instrument.isin,
+          tickSize: instrument.tickSize,
+          lotSize: instrument.lotSize,
+          isActive: instrument.isActive,
+          source: instrument.source,
+        })),
+      });
+      inserted += result.inserted;
+      updated += result.updated;
+    }
+    await ctx.runMutation(internal.marketStore.recordInstrumentSync, {
+      providerId: provider.id,
+      count: master.length,
+    });
+    await ctx.runMutation(internal.marketStore.recordProviderResult, {
+      providerId: provider.id,
+      ok: true,
+      latencyMs: Date.now() - startedAt,
+    });
+    return { providerId: provider.id, total: master.length, inserted, updated };
   },
 });
 

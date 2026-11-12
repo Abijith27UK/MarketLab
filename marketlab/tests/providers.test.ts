@@ -197,7 +197,8 @@ describe("error redaction", () => {
 describe("provider configuration", () => {
   it("reports every missing env var without leaking values", () => {
     const statuses = providerStatuses({});
-    expect(statuses).toHaveLength(4);
+    // Four credentialed/EOD providers plus the flag-gated NSE MCP experiment.
+    expect(statuses).toHaveLength(5);
     // TejHQ is keyless, so it is the one provider that is usable with no
     // environment at all; every credentialed provider must still list what it
     // is missing.
@@ -212,6 +213,10 @@ describe("provider configuration", () => {
     expect(fyersStatus?.missingEnv).toEqual(
       expect.arrayContaining(["FYERS_APP_ID", "FYERS_SECRET_ID", "FYERS_ACCESS_TOKEN"])
     );
+    // NSE MCP is opt-in: absent flag means not configured, never "ready".
+    const nseStatus = statuses.find((status) => status.providerId === "nsemcp");
+    expect(nseStatus?.configured).toBe(false);
+    expect(nseStatus?.missingEnv).toEqual(["NSE_MCP_POC_ENABLED"]);
   });
 
   it("falls back to the keyless provider when no credentials are configured", () => {
@@ -221,6 +226,27 @@ describe("provider configuration", () => {
     // Capabilities the keyless tier does not offer must stay unselected.
     expect(providerFor({}, "fundamentals")).toBeNull();
     expect(providerFor({}, "candles", "15m")).toBeNull();
+  });
+
+  it("routes to the explicitly preferred quote provider only when it is available", () => {
+    expect(providerFor({}, "quotes", undefined, "tejhq")?.id).toBe("tejhq");
+    // Flag disabled: the preference cannot win; the caller falls back to TejHQ
+    // and reports it rather than showing NSE prices under a TejHQ label.
+    expect(providerFor({}, "quotes", undefined, "nsemcp")?.id).toBe("tejhq");
+    expect(
+      providerFor({ NSE_MCP_POC_ENABLED: "true" }, "quotes", undefined, "nsemcp")?.id
+    ).toBe("nsemcp");
+    // NSE history is available only when explicitly selected; an unqualified
+    // candle request keeps TejHQ so existing charts and backtests are unchanged.
+    expect(providerFor({ NSE_MCP_POC_ENABLED: "true" }, "candles", "1d")?.id).toBe("tejhq");
+    expect(
+      providerFor({ NSE_MCP_POC_ENABLED: "true" }, "candles", "1d", "nsemcp")?.id
+    ).toBe("nsemcp");
+    // Still no intraday history and no bulk master sync from NSE MCP.
+    expect(
+      providerFor({ NSE_MCP_POC_ENABLED: "true" }, "candles", "15m", "nsemcp")?.id
+    ).not.toBe("nsemcp");
+    expect(providerFor({ NSE_MCP_POC_ENABLED: "true" }, "instrumentSync")?.id).toBe("tejhq");
   });
 
   it("selects only providers that declare the capability and interval", () => {

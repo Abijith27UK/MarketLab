@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
+import { BellRing, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import { useRootContext } from "@/context/RootContext";
-import { Button, Card, Input, Select } from "@/components/ui";
+import { Button, Card, Input, SectionHeader, Select } from "@/components/ui";
+import PageHeader from "@/components/layout/PageHeader";
 import AuthPanel from "@/components/AuthPanel";
 import BackendRequired from "@/components/system/BackendRequired";
 import DataModeBadge from "@/components/market/DataModeBadge";
@@ -178,88 +180,92 @@ const AlertsLive: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="p-6 text-gray-400">Loading alerts…</div>;
+    return (
+      <div className="p-4 md:p-6" aria-busy="true">
+        <span className="skeleton" style={{ display: "block", height: 26, width: 140 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 120 }} />
+        <span className="skeleton mt-4" style={{ display: "block", height: 200 }} />
+      </div>
+    );
   }
 
   if (!isAuthenticated) {
     return (
       <div className="p-4 md:p-6">
-        <h1 className="ml-page-title">Alerts</h1>
-        <p className="ml-page-sub">
-          Price threshold alerts are stored per user. Sign in to create and evaluate your own.
-        </p>
-        <Card className="mt-5 max-w-md">
+        <PageHeader
+          title="Alerts"
+          description="Price threshold alerts are stored per user. Sign in to create and evaluate your own."
+        />
+        <Card className="max-w-md">
           <AuthPanel />
         </Card>
       </div>
     );
   }
 
+  const activeCount = (alerts ?? []).filter((alert) => alert.status === "ACTIVE").length;
+  const triggeredCount = (alerts ?? []).filter((alert) => alert.status === "TRIGGERED").length;
+
   return (
     <div className="p-4 md:p-6">
-      <header className="ml-page-head">
-        <div>
-          <h1 className="ml-page-title">Alerts</h1>
-          <p className="ml-page-sub">
-            Threshold checks against the latest eligible price. Evaluation is manual — there is no
-            scheduler or notification delivery in this deployment.
-          </p>
-        </div>
-        <div className="ml-page-head-side">
+      <PageHeader
+        title="Alerts"
+        description="Threshold checks against the latest eligible price. Evaluation is manual — there is no scheduler or notification delivery in this deployment."
+        meta={
+          <>
+            <BellRing size={13} aria-hidden="true" />
+            <span className="ml-metric__hint">
+              {alerts === undefined
+                ? "Loading alerts…"
+                : `${alerts.length} alert${alerts.length === 1 ? "" : "s"} · ${activeCount} active · ${triggeredCount} triggered`}
+            </span>
+          </>
+        }
+        actions={
           <Button variant="secondary" size="sm" onClick={() => void runCheck()} disabled={checking}>
             {checking ? "Checking…" : "Check now"}
           </Button>
-        </div>
-      </header>
+        }
+      />
 
-      <p className="ml-alert-caveat" data-testid="alerts-caveat">
+      <p className="ml-account-note mb-4" data-testid="alerts-caveat">
         Alerts never evaluate in the background and nothing is emailed or pushed. Each alert keeps
         the price, source and freshness label from the check that last touched it. A trigger based on
         a SAMPLE price is marked SAMPLE and is not a real market event.
       </p>
 
       {error && (
-        <p className="ml-inline-error" role="alert">
+        <p className="ml-field-error mb-3" role="alert">
           {error}
         </p>
       )}
       {notice && (
-        <p className="ml-inline-notice" role="status">
+        <p className="ml-ticket__notice mb-3" role="status">
           {notice}
         </p>
       )}
 
-      <Card className="mt-5">
-        <div className="ml-section-head">
-          <div>
-            <h2 className="ml-section-title">
-              {editingAlertId ? "Edit alert" : "New alert"}
-            </h2>
-            <p className="ml-section-sub">
-              Equity and ETF instruments only. A triggered alert must be re-armed before editing.
-            </p>
-          </div>
-        </div>
+      <Card>
+        <SectionHeader
+          title={editingAlertId ? "Edit alert" : "New alert"}
+          description="Equity and ETF instruments only. A triggered alert must be re-armed before editing."
+        />
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <div className="md:col-span-2">
-            <Input
-              label="Find instrument"
-              placeholder="Search symbol or company"
-              value={search}
-              onChange={setSearch}
-            />
-            <div className="mt-3">
-              <Select
-                label="Instrument"
-                value={instrumentId}
-                onSelect={setInstrumentId}
-                options={instruments}
-                disabled={editingAlertId !== null}
-                placeholder={results === undefined ? "Searching…" : "Select instrument"}
-              />
-            </div>
-          </div>
+        <div className="ml-form-grid mt-3">
+          <Input
+            label="Find instrument"
+            placeholder="Search symbol or company"
+            value={search}
+            onChange={setSearch}
+          />
+          <Select
+            label="Instrument"
+            value={instrumentId}
+            onSelect={setInstrumentId}
+            options={instruments}
+            disabled={editingAlertId !== null}
+            placeholder={results === undefined ? "Searching…" : "Select instrument"}
+          />
           <Select
             label="Condition"
             value={direction}
@@ -276,106 +282,122 @@ const AlertsLive: React.FC = () => {
             value={threshold}
             onChange={setThreshold}
           />
+          <div className="is-full">
+            <Input
+              label="Note (optional)"
+              placeholder="Why this level matters"
+              value={note}
+              onChange={setNote}
+            />
+          </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[2fr_auto] md:items-end">
-          <Input
-            label="Note (optional)"
-            placeholder="Why this level matters"
-            value={note}
-            onChange={setNote}
-          />
-          <div className="flex items-end gap-2">
-            <Button onClick={() => void submit()} disabled={pending || !instrumentId}>
-              {pending ? "Saving…" : editingAlertId ? "Update alert" : "Create alert"}
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button onClick={() => void submit()} disabled={pending || !instrumentId}>
+            {pending ? "Saving…" : editingAlertId ? "Update alert" : "Create alert"}
+          </Button>
+          {editingAlertId && (
+            <Button variant="secondary" onClick={cancelEditing} disabled={pending}>
+              Cancel edit
             </Button>
-            {editingAlertId && (
-              <Button variant="secondary" onClick={cancelEditing} disabled={pending}>
-                Cancel edit
-              </Button>
-            )}
-          </div>
+          )}
         </div>
       </Card>
 
-      <Card className="mt-6">
-        <div className="ml-section-head">
-          <div>
-            <h2 className="ml-section-title">Your alerts</h2>
-            <p className="ml-section-sub">
-              {alerts === undefined
-                ? "Loading…"
-                : `${alerts.length} alert${alerts.length === 1 ? "" : "s"}`}
+      <Card className="mt-5">
+        <SectionHeader
+          title="Your alerts"
+          description="Each row keeps the price and freshness label from its last check."
+        />
+
+        {alerts === undefined && (
+          <div className="mt-3 flex flex-col gap-2" aria-busy="true">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <span key={index} className="skeleton" style={{ height: 34 }} />
+            ))}
+          </div>
+        )}
+
+        {alerts?.length === 0 && (
+          <div className="ml-empty-block mt-3" data-testid="alerts-empty">
+            <p className="ml-empty-block__title">No alerts yet</p>
+            <p className="ml-empty-block__body">
+              Create one above, then use “Check now” to evaluate it against the latest eligible price.
             </p>
           </div>
-        </div>
-
-        {alerts === undefined && <p className="ml-empty">Loading alerts…</p>}
-        {alerts?.length === 0 && (
-          <p className="ml-empty" data-testid="alerts-empty">
-            No alerts yet. Create one above, then use “Check now” to evaluate it.
-          </p>
         )}
 
         {alerts && alerts.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="ml-table" data-testid="alerts-table">
+          <div className="ml-table-scroll mt-3">
+            <table className="ml-data-table" data-testid="alerts-table">
               <thead>
                 <tr>
-                  <th>Instrument</th>
-                  <th>Condition</th>
-                  <th>Status</th>
-                  <th className="is-right">Last price</th>
-                  <th>Last checked</th>
-                  <th>Trigger</th>
-                  <th />
+                  <th scope="col">Instrument</th>
+                  <th scope="col">Condition</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" className="is-right">
+                    Last price
+                  </th>
+                  <th scope="col" className="ml-cell-hide-sm">
+                    Last checked
+                  </th>
+                  <th scope="col">Trigger</th>
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {alerts.map((alert) => (
                   <tr key={alert._id} data-alert-id={alert._id} data-status={alert.status}>
                     <td>
-                      <div className="flex flex-col">
-                        <span className="text-gray-200">{alert.symbol}</span>
-                        <span className="text-xs text-gray-500">
+                      <span className="ml-data-table__instrument">
+                        <span className="ml-data-table__symbol">{alert.symbol}</span>
+                        <span className="ml-data-table__name">
                           {alert.exchange}
                           {alert.note ? ` · ${alert.note}` : ""}
                         </span>
-                      </div>
+                      </span>
                     </td>
-                    <td className="ml-mono text-sm">
+                    <td className="is-num">
                       {formatAlertCondition(alert.direction, alert.threshold)}
                     </td>
                     <td>
                       <span className="ml-order-status" data-status={alert.status}>
-                        {alert.status}
+                        {alert.status === "ACTIVE"
+                          ? "Enabled"
+                          : alert.status === "PAUSED"
+                            ? "Paused"
+                            : alert.status}
                       </span>
                     </td>
-                    <td className="is-right ml-mono">
-                      <span className="flex items-center justify-end gap-1.5">
-                        {alert.lastPrice === null ? "—" : formatPrice(alert.lastPrice)}
+                    <td className="is-right is-num">
+                      <span className="flex flex-col items-end gap-1">
+                        <span>
+                          {alert.lastPrice === null ? "—" : formatPrice(alert.lastPrice)}
+                        </span>
                         {alert.lastMode && (
                           <DataModeBadge mode={alert.lastMode} source={alert.lastSource ?? undefined} />
                         )}
                       </span>
                     </td>
-                    <td className="whitespace-nowrap text-xs text-gray-400">
+                    <td className="ml-cell-hide-sm whitespace-nowrap text-[11px] text-[var(--text-3)]">
                       {alert.lastEvaluatedAt === null
                         ? "never"
                         : formatDateTime(alert.lastEvaluatedAt)}
                     </td>
-                    <td className="text-xs">
+                    <td>
                       {alert.triggeredAt === null ? (
-                        "—"
+                        <span className="text-[var(--text-3)]">—</span>
                       ) : (
-                        <span className="flex flex-col gap-1">
+                        <span className="flex flex-col gap-1 text-[11px]">
                           <span>
                             {formatPrice(alert.triggerPrice)} ·{" "}
                             {formatDateTime(alert.triggeredAt)}
                           </span>
                           {alert.triggerMode && <DataModeBadge mode={alert.triggerMode} />}
                           {alert.triggerMode === "SAMPLE" && (
-                            <span className="text-amber-400">
+                            <span className="text-[var(--warn)]">
                               SAMPLE price — not a real market move
                             </span>
                           )}
@@ -383,7 +405,7 @@ const AlertsLive: React.FC = () => {
                       )}
                     </td>
                     <td>
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         {alert.status !== "TRIGGERED" && (
                           <button
                             type="button"
@@ -391,7 +413,7 @@ const AlertsLive: React.FC = () => {
                             disabled={pending}
                             onClick={() => startEditing(alert)}
                           >
-                            Edit
+                            <Pencil size={11} aria-hidden="true" /> Edit
                           </button>
                         )}
                         {alert.status === "TRIGGERED" ? (
@@ -401,7 +423,7 @@ const AlertsLive: React.FC = () => {
                             disabled={pending}
                             onClick={() => void act(() => rearm({ alertId: alert._id }), "Alert re-armed.")}
                           >
-                            Re-arm
+                            <Play size={11} aria-hidden="true" /> Re-arm
                           </button>
                         ) : alert.status === "PAUSED" ? (
                           <button
@@ -415,7 +437,7 @@ const AlertsLive: React.FC = () => {
                               )
                             }
                           >
-                            Resume
+                            <Play size={11} aria-hidden="true" /> Resume
                           </button>
                         ) : (
                           <button
@@ -429,7 +451,7 @@ const AlertsLive: React.FC = () => {
                               )
                             }
                           >
-                            Pause
+                            <Pause size={11} aria-hidden="true" /> Pause
                           </button>
                         )}
                         <button
@@ -444,7 +466,7 @@ const AlertsLive: React.FC = () => {
                             );
                           }}
                         >
-                          Delete
+                          <Trash2 size={11} aria-hidden="true" /> Delete
                         </button>
                       </div>
                     </td>

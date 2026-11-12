@@ -1,34 +1,32 @@
 import React from "react";
-import type { DataMode, Quote } from "@/lib/marketClient";
-import { modeDescription, formatAge } from "@/lib/format";
+import type { DataMode } from "@/lib/marketClient";
+import { formatAge } from "@/lib/format";
 
-interface DataModeBadgeProps {
-  mode: DataMode;
-  source?: string | null;
-  asOf?: number | null;
-  className?: string;
-}
-
-/**
- * Freshness label shown next to every market value.
- * The label comes from the server, not from "the request succeeded".
- * When mode is DELAYED and asOf is available, shows how long ago the data was.
+/** 
+ * Freshness label shown next to every market value. 
+ * Shows mode and how long ago the data was (for DELAYED mode).
+ * Source is accepted for compatibility but not displayed.
  */
-export const DataModeBadge: React.FC<DataModeBadgeProps> = ({ mode, source, asOf, className = "" }) => {
-  const delayText = mode === "DELAYED" && asOf != null
-    ? `· ${formatAge(asOf, Date.now())} ago`
-    : null;
-  const sourceText = source ? ` · ${source}` : "";
+export const DataModeBadge = React.forwardRef<HTMLElement, {mode: DataMode; asOf?: number | null; source?: string | null; className?: string}>(({mode, asOf, source, className = ""}, ref) => {
+  // formatAge already reads "5s ago", so it is used verbatim (never "5s ago ago").
+  const delayText = mode === "DELAYED" && asOf != null ? formatAge(asOf, Date.now()) : null;
+  
+  // Source is accepted for compatibility but intentionally not displayed
+  // The badge shows only mode + delay time
+  
   return (
-    <span
+    <span 
       className={`ml-data-mode ${className}`}
+      ref={ref}
       data-mode={mode}
-      title={`${modeDescription(mode)}${sourceText}${delayText ? ` · data: ${delayText.slice(1)}` : ""}`}
     >
       {mode}
-      {delayText}
+      {delayText ? <span className="ml-data-mode__age">· {delayText}</span> : null}
     </span>
   );
-};
+});
 
+DataModeBadge.displayName = "DataModeBadge";
+
+/** Default export for compatibility */
 export default DataModeBadge;

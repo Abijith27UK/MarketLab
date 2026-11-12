@@ -62,7 +62,14 @@ export interface QuotesResult {
   quotes: Quote[];
   mode: DataMode;
   source: string;
+  /** Retrieval time — when MarketLab asked the provider. Never quote age. */
   asOf: number;
+  /** Newest provider quote timestamp in the batch; null when none was reported. */
+  quoteAsOf: number | null;
+  /** When the backend received these values (same as `asOf`, explicit name). */
+  retrievedAt: number;
+  /** Provider that served the batch, or null when it fell back to SAMPLE. */
+  quoteProvider: string | null;
   session: MarketSessionInfo;
   note: string | null;
   warning: string | null;
@@ -90,6 +97,9 @@ export interface CandleQuality {
   lastTs: number | null;
   fromCache: boolean;
 }
+
+/** Historical chart-history providers (daily bars only). */
+export type ChartSource = "tejhq" | "nsemcp";
 
 export interface CandleResult {
   instrumentId: string;
@@ -122,7 +132,13 @@ export interface InstrumentRow {
   tickSize?: number | null;
   lotSize?: number | null;
   isActive?: boolean;
-  providerIds?: { fyers?: string; breeze?: string; tapetide?: string; tejhq?: string };
+  providerIds?: {
+    fyers?: string;
+    breeze?: string;
+    tapetide?: string;
+    tejhq?: string;
+    nsemcp?: string;
+  };
 }
 
 export interface SearchResult {
@@ -130,6 +146,55 @@ export interface SearchResult {
   nextCursor: string | null;
   isDone: boolean;
   mode: "search" | "browse";
+}
+
+export interface DashboardIndicesResult {
+  items: InstrumentRow[];
+}
+
+export interface FeaturedInstrumentsResult {
+  items: InstrumentRow[];
+  /** Requested symbols the catalogue does not contain. */
+  missing: string[];
+}
+
+/** One row of the official NSE market-mover ranking. */
+export interface MarketMoverRow {
+  symbol: string;
+  /** Catalogue name when the symbol exists locally, otherwise null. */
+  name: string | null;
+  instrumentId: string;
+  inCatalogue: boolean;
+  series: string;
+  lastPrice: number;
+  previousClose: number | null;
+  change: number | null;
+  /** Strictly > 0 in Gainers, strictly < 0 in Losers. */
+  changePercent: number;
+  /** Provider crawl time for this direction, UTC ms. */
+  quoteTime: number | null;
+}
+
+/** Fixed-source market movers payload (always NSE MCP). */
+export interface MarketMoversResult {
+  available: boolean;
+  source: "nsemcp";
+  sourceLabel: string;
+  tool: string | null;
+  universe: string;
+  segment: string;
+  gainers: MarketMoverRow[];
+  losers: MarketMoverRow[];
+  mode: DataMode;
+  quoteTimestamp: number | null;
+  sessionDate: string | null;
+  retrievedAt: number;
+  cacheExpiresAt: number | null;
+  fromCache: boolean;
+  /** True when the ranking could not be refreshed and the last copy is shown. */
+  stale: boolean;
+  warning: string | null;
+  reason: string | null;
 }
 
 export interface CatalogueStats {
@@ -185,6 +250,14 @@ export interface ProviderOverview {
   catalogue: { total: number; sample: number; provider: number; lastUpdated: number | null };
   coverage: DataCoverage;
   features: FeatureAvailability[];
+  /** The user's selected informational quote source (TejHQ when unset). */
+  preferredQuoteProvider: "tejhq" | "nsemcp" | string;
+  /** The user's selected historical chart source (TejHQ when unset). */
+  preferredChartSource?: "tejhq" | "nsemcp" | string;
+  /** Which providers can currently serve daily chart history. */
+  chartSources?: { tejhq: boolean; nsemcp: boolean };
+  /** True only when NSE_MCP_POC_ENABLED is set on the deployment. */
+  nseMcpEnabled: boolean;
   hasConfiguredProvider: boolean;
   providerCount: number;
 }
@@ -395,7 +468,13 @@ export const marketApi = {
   >("marketData:getQuotes"),
   getCandles: makeFunctionReference<
     "action",
-    { instrumentId: string; interval: Interval; fromMs?: number; toMs?: number },
+    {
+      instrumentId: string;
+      interval: Interval;
+      fromMs?: number;
+      toMs?: number;
+      source?: ChartSource;
+    },
     CandleResult
   >("marketData:getCandles"),
   getFundamentals: makeFunctionReference<
@@ -411,6 +490,12 @@ export const marketApi = {
     { providerId: string },
     TestProviderResult
   >("marketData:testProvider"),
+  /** Persists the informational quote source for the signed-in user. */
+  setQuoteProvider: makeFunctionReference<
+    "mutation",
+    { provider: "tejhq" | "nsemcp" },
+    "tejhq" | "nsemcp"
+  >("users:setQuoteProvider"),
   prepareBacktestData: makeFunctionReference<
     "action",
     { strategyId: string },
@@ -442,6 +527,23 @@ export const marketApi = {
   catalogueStats: makeFunctionReference<"query", Record<string, never>, CatalogueStats>(
     "marketData:catalogueStats"
   ),
+  /** Six verified NSE index identities for the dashboard cards. */
+  dashboardIndices: makeFunctionReference<"query", Record<string, never>, DashboardIndicesResult>(
+    "marketData:dashboardIndices"
+  ),
+  /** Curated dashboard stocks, resolved in the requested order. */
+  featuredInstruments: makeFunctionReference<
+    "query",
+    { symbols: string[]; limit?: number },
+    FeaturedInstrumentsResult
+  >("marketData:featuredInstruments"),
+
+  /* official NSE market movers — fixed source, independent of the quote selector */
+  getMarketMovers: makeFunctionReference<
+    "action",
+    { refresh?: boolean },
+    MarketMoversResult
+  >("marketMovers:getMarketMovers"),
   marketStatus: makeFunctionReference<"query", Record<string, never>, SessionStatusResult>(
     "marketData:marketStatus"
   ),

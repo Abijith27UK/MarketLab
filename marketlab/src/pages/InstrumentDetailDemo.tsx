@@ -1,7 +1,10 @@
 import React, { useMemo, useState } from "react";
-import { Card, Button, Select } from "@/components/ui";
+import { ArrowLeft } from "lucide-react";
+import { Button, Card, EmptyState, SectionHeader, Select } from "@/components/ui";
 import PriceChart from "@/components/chart/PriceChart";
 import DataModeBadge from "@/components/market/DataModeBadge";
+import DataFreshnessBadge from "@/components/market/DataFreshnessBadge";
+import PriceChange from "@/components/market/PriceChange";
 import {
   INTERVALS,
   INTERVAL_LABEL,
@@ -15,14 +18,7 @@ import {
   demoQuote,
   parseInstrumentId,
 } from "@/lib/demoCatalogue";
-import {
-  formatPercent,
-  formatPrice,
-  formatTimestamp,
-  formatVolume,
-  signGlyph,
-  toneClass,
-} from "@/lib/format";
+import { formatPrice, formatTimestamp, formatVolume, toneClass } from "@/lib/format";
 
 interface InstrumentDetailProps {
   instrumentId: string;
@@ -36,6 +32,12 @@ const DEFAULT_INDICATORS: IndicatorConfig[] = [
   { name: "MACD", enabled: false, fast: 12, slow: 26, signal: 9 },
   { name: "BOLLINGER", enabled: false, period: 20, multiplier: 2 },
   { name: "VWAP", enabled: false },
+];
+
+const CHART_TYPES = [
+  { value: "candlestick", label: "Candlesticks" },
+  { value: "bar", label: "OHLC bars" },
+  { value: "line", label: "Line" },
 ];
 
 /**
@@ -77,27 +79,39 @@ const InstrumentDetailDemo: React.FC<InstrumentDetailProps> = ({ instrumentId, o
       )
     );
 
+  const backButton = (
+    <button
+      type="button"
+      className="mb-4 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-3)] transition-colors hover:text-[var(--text)]"
+      onClick={onBack}
+    >
+      <ArrowLeft size={13} aria-hidden="true" /> Markets
+    </button>
+  );
+
   if (!instrument || !parsed) {
     return (
       <div className="p-4 md:p-6">
-        <button className="mb-3 text-xs text-gray-400 hover:text-white" onClick={onBack}>
-          ← Back
-        </button>
-        <Card>
-          <h1 className="text-xl font-semibold">Instruments need the backend</h1>
-          <p className="mt-2 text-sm text-gray-400">
-            <span className="ml-mono">{instrumentId.slice(0, 96)}</span> is not in the sample
-            catalogue. The full instrument master lives in Convex and is unavailable while the
-            deployment is offline.
-          </p>
-          <p className="mt-2 text-sm text-gray-400">
-            Sample instruments: NSE:RELIANCE:EQUITY, NSE:TCS:EQUITY, NSE:NIFTY 50:INDEX,
-            BSE:SENSEX:INDEX.
-          </p>
-          <Button variant="secondary" className="mt-4" onClick={onBack}>
-            Back to overview
-          </Button>
-        </Card>
+        {backButton}
+        <EmptyState
+          title="Instruments need the backend"
+          description={
+            <>
+              <span className="ml-mono">{instrumentId.slice(0, 96)}</span> is not in the sample
+              catalogue. The full instrument master lives in Convex and is unavailable while the
+              deployment is offline.
+            </>
+          }
+          action={
+            <Button variant="secondary" size="sm" onClick={onBack}>
+              Back to markets
+            </Button>
+          }
+        />
+        <p className="ml-detail-note mt-4">
+          Sample instruments: NSE:RELIANCE:EQUITY, NSE:TCS:EQUITY, NSE:NIFTY 50:INDEX,
+          BSE:SENSEX:INDEX.
+        </p>
       </div>
     );
   }
@@ -107,93 +121,88 @@ const InstrumentDetailDemo: React.FC<InstrumentDetailProps> = ({ instrumentId, o
 
   return (
     <div className="p-4 md:p-6">
-      <button className="mb-3 text-xs text-gray-400 hover:text-white" onClick={onBack}>
-        ← Back
-      </button>
+      {backButton}
 
       <div className="ml-demo-note" role="note">
         <span aria-hidden="true">◇</span> Sample series: these candles and prices are generated
         deterministically for the demo. They are not exchange data.
       </div>
 
-      <header className="mb-5 mt-4 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-3xl font-bold">{instrument.symbol}</h1>
-            <span className="text-sm text-gray-500">
-              {instrument.exchange} · {instrument.instrumentType} · {instrument.sector}
+      <header className="ml-detail-head mb-5 mt-4">
+        <div className="ml-detail-head__id">
+          <div className="ml-detail-tags">
+            <h1 className="ml-detail-symbol">{instrument.symbol}</h1>
+            <span className="ml-data-table__exchange">{instrument.exchange}</span>
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-3)]">
+              {instrument.instrumentType}
             </span>
+            <span className="text-[11px] text-[var(--text-3)]">{instrument.sector}</span>
             <DataModeBadge mode="SAMPLE" source="sample" />
           </div>
-          <p className="text-gray-400">{instrument.name}</p>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="ml-detail-name">{instrument.name}</p>
+          <p className="ml-detail-note">
             Internal id <span className="ml-mono">{instrument.instrumentId}</span>
           </p>
         </div>
 
-        {quote && (
-          <div className="text-right">
-            <p className={`ml-mono text-2xl font-bold ${toneClass(quote.change)}`}>
-              ₹{formatPrice(quote.lastPrice)}
-            </p>
-            <p className={`text-sm ${toneClass(quote.changePercent)}`}>
-              {signGlyph(quote.changePercent)} {formatPrice(quote.change)} (
-              {formatPercent(quote.changePercent)})
-            </p>
-            <p className="text-xs text-gray-500">
-              Vol {formatVolume(quote.volume)} · sample close{" "}
-              {formatTimestamp(quote.quoteTime, interval)}
-            </p>
-          </div>
-        )}
+        <div className="ml-detail-quote">
+          <span className={`ml-detail-quote__price ml-mono ${toneClass(quote?.change)}`}>
+            {quote ? `₹${formatPrice(quote.lastPrice)}` : "—"}
+          </span>
+          {quote && (
+            <PriceChange change={quote.change} changePercent={quote.changePercent} showAbsolute />
+          )}
+          {quote && (
+            <>
+              <span className="ml-detail-quote__meta">
+                Vol {formatVolume(quote.volume)} · sample close{" "}
+                {formatTimestamp(quote.quoteTime, interval)}
+              </span>
+              <span className="ml-detail-quote__meta">Source sample catalogue</span>
+              <DataFreshnessBadge
+                mode="SAMPLE"
+                source="sample"
+                asOf={quote.quoteTime}
+                now={now}
+                className="mt-1"
+              />
+            </>
+          )}
+        </div>
       </header>
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Timeframe">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="ml-chip-row" role="group" aria-label="Timeframe">
           {INTERVALS.map((choice) => (
             <button
               key={choice}
-              onClick={() => setInterval(choice)}
-              className={`rounded border px-2.5 py-1 text-xs ${
-                interval === choice
-                  ? "border-emerald-500 bg-emerald-500/15 text-emerald-300"
-                  : "border-gray-700 text-gray-400 hover:bg-gray-800"
-              }`}
+              type="button"
+              className="ml-chip"
               aria-pressed={interval === choice}
+              onClick={() => setInterval(choice)}
             >
               {INTERVAL_LABEL[choice]}
             </button>
           ))}
         </div>
-
-        <div className="w-40">
+        <div className="w-36">
           <Select
             value={chartType}
             onSelect={(value) => setChartType(value as ChartType)}
-            options={[
-              { value: "candlestick", label: "Candlesticks" },
-              { value: "bar", label: "OHLC bars" },
-              { value: "line", label: "Line" },
-            ]}
+            options={CHART_TYPES}
             label="Chart type"
           />
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      <div className="ml-chip-row mb-3" role="group" aria-label="Indicators">
         {indicators.map((indicator) => (
-          <label
-            key={indicator.name}
-            className={`flex items-center gap-2 rounded border px-2 py-1 text-xs ${
-              indicator.enabled
-                ? "border-emerald-500/60 text-emerald-300"
-                : "border-gray-700 text-gray-400"
-            }`}
-          >
+          <label key={indicator.name} className={`ml-chip ${indicator.enabled ? "is-active" : ""}`}>
             <input
               type="checkbox"
               checked={indicator.enabled}
               onChange={() => toggleIndicator(indicator.name)}
+              className="accent-[var(--accent)]"
             />
             {indicator.name}
             {(indicator.name === "SMA" || indicator.name === "EMA" || indicator.name === "RSI") && (
@@ -205,7 +214,7 @@ const InstrumentDetailDemo: React.FC<InstrumentDetailProps> = ({ instrumentId, o
                 onChange={(event) =>
                   setIndicatorPeriod(indicator.name, Number(event.target.value) || 2)
                 }
-                className="w-14 rounded border border-gray-700 bg-gray-900 px-1 py-0.5 text-gray-200"
+                className="ml-chip__input"
                 aria-label={`${indicator.name} period`}
               />
             )}
@@ -217,10 +226,10 @@ const InstrumentDetailDemo: React.FC<InstrumentDetailProps> = ({ instrumentId, o
         title={`${instrument.symbol} · ${INTERVAL_LABEL[interval]}`}
         subtitle={
           candles.length > 0
-            ? `${candles.length} sample candles · ${formatTimestamp(first, interval)} → ${formatTimestamp(
-                last,
+            ? `${candles.length} sample candles · ${formatTimestamp(
+                first,
                 interval
-              )}`
+              )} → ${formatTimestamp(last, interval)}`
             : undefined
         }
         candles={candles}
@@ -229,53 +238,49 @@ const InstrumentDetailDemo: React.FC<InstrumentDetailProps> = ({ instrumentId, o
         indicators={indicators}
         mode="SAMPLE"
         source="sample"
+        height={460}
         emptyMessage="No sample candles for this interval."
       />
 
-      <p className="mt-2 text-xs text-gray-500">
+      <p className="ml-detail-note mt-2">
         Only the intervals the sample generator produces are offered here. A connected provider
         exposes just the intervals it documents (for example ICICI Breeze serves 1 minute, 5 minute
         and daily candles only).
       </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="ml-detail-cards mt-5">
         <Card>
-          <h2 className="mb-3 text-lg font-semibold">Instrument information</h2>
-          <dl className="grid grid-cols-2 gap-3 text-sm">
+          <SectionHeader title="Instrument information" description="From the sample catalogue." />
+          <dl className="ml-kv mt-3">
             <div>
-              <dt className="text-gray-500">Exchange</dt>
-              <dd className="text-gray-200">{instrument.exchange}</dd>
+              <dt>Exchange</dt>
+              <dd>{instrument.exchange}</dd>
             </div>
             <div>
-              <dt className="text-gray-500">Type</dt>
-              <dd className="text-gray-200">{instrument.instrumentType}</dd>
+              <dt>Type</dt>
+              <dd>{instrument.instrumentType}</dd>
             </div>
             <div>
-              <dt className="text-gray-500">Sector</dt>
-              <dd className="text-gray-200">{instrument.sector}</dd>
+              <dt>Sector</dt>
+              <dd>{instrument.sector}</dd>
             </div>
             <div>
-              <dt className="text-gray-500">Source</dt>
-              <dd className="text-gray-200">
-                <DataModeBadge mode="SAMPLE" />
-              </dd>
+              <dt>Instrument id</dt>
+              <dd className="ml-mono">{instrument.instrumentId}</dd>
             </div>
           </dl>
-          <p className="mt-3 text-xs text-gray-500">
-            Tick size, lot size, ISIN and provider symbol mappings are only shown when the backend
-            has a synced instrument record for this symbol.
-          </p>
         </Card>
 
         <Card>
-          <h2 className="mb-3 text-lg font-semibold">Account features</h2>
-          <ul className="ml-paused-list">
-            <li>Watchlist add/remove needs the backend and a signed-in user.</li>
-            <li>Fundamentals need a configured fundamentals provider (Tapetide token).</li>
-            <li>CSV imports are stored per user in Convex and are unavailable offline.</li>
-          </ul>
-          <p className="mt-3 text-xs text-gray-500">
-            No order can be placed from this page, and none was placed.
+          <SectionHeader title="About this view" description="Why the data is labelled SAMPLE." />
+          <p className="ml-detail-note mt-3">
+            The backend is unreachable, so quotes, candles and indicators here come from the
+            deterministic sample generator bundled with MarketLab. Every value is labelled SAMPLE and
+            none of it is exchange data.
+          </p>
+          <p className="ml-detail-note mt-2">
+            With a reachable Convex deployment this page loads the real instrument, provider
+            candles, saved chart preferences, fundamentals and CSV imports instead.
           </p>
         </Card>
       </div>

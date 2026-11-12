@@ -93,6 +93,54 @@ export const ensureProfile = mutation({
 /**
  * Updates the signed-in user's own profile. Only provided fields are patched.
  */
+/**
+ * Selects the informational quote source for this user.
+ *
+ * This preference only changes informational quote displays. Paper fills,
+ * alerts, portfolio valuation and backtests keep their own source rules.
+ */
+export const setQuoteProvider = mutation({
+  args: { provider: v.union(v.literal("tejhq"), v.literal("nsemcp")) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const profile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (!profile) throw new Error("Profile not found");
+    await ctx.db.patch(profile._id, {
+      quoteProvider: args.provider,
+      updatedAt: Date.now(),
+    });
+    return args.provider;
+  },
+});
+
+/**
+ * Selects the historical chart source for this user.
+ *
+ * Chart history is independent of the informational quote source, and neither
+ * preference affects paper fills, alerts, portfolio valuation or backtests.
+ */
+export const setChartSource = mutation({
+  args: { source: v.union(v.literal("tejhq"), v.literal("nsemcp")) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const profile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (!profile) throw new Error("Profile not found");
+    await ctx.db.patch(profile._id, {
+      chartSource: args.source,
+      updatedAt: Date.now(),
+    });
+    return args.source;
+  },
+});
+
 export const updateProfile = mutation({
   args: {
     name: v.optional(v.string()),

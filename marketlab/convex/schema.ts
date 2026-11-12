@@ -76,6 +76,18 @@ export default defineSchema({
         movers: v.boolean(),
       })
     ),
+    /**
+     * Informational quote source chosen by this user. Only affects quote
+     * displays; paper trading, alerts and backtests keep their own source rules.
+     * Absent means the TejHQ default.
+     */
+    quoteProvider: v.optional(v.union(v.literal("tejhq"), v.literal("nsemcp"))),
+    /**
+     * Historical chart source chosen by this user. Independent of the quote
+     * source: a delayed NSE MCP quote can be paired with either daily series.
+     * Absent means the TejHQ default.
+     */
+    chartSource: v.optional(v.union(v.literal("tejhq"), v.literal("nsemcp"))),
   }).index("by_user", ["userId"]),
 
   // Watchlists owned by a user
@@ -129,6 +141,7 @@ export default defineSchema({
         breeze: v.optional(v.string()),
         tapetide: v.optional(v.string()),
         tejhq: v.optional(v.string()),
+        nsemcp: v.optional(v.string()),
       })
     ),
   })
@@ -167,7 +180,24 @@ export default defineSchema({
     mode: dataModeValidator,
   })
     .index("by_instrument", ["instrumentId"])
+    .index("by_instrument_source", ["instrumentId", "source"])
     .index("by_source", ["source"]),
+
+  /**
+   * Cached research payloads (company profile, statements, shareholding, news).
+   * The provider's raw JSON is stored so normalization can be re-applied without
+   * spending provider quota; `fetchedAt` is MarketLab's retrieval time.
+   */
+  researchCache: defineTable({
+    instrumentId: v.string(),
+    kind: v.string(),
+    source: v.string(),
+    payload: v.string(),
+    asOf: v.union(v.string(), v.null()),
+    reportDate: v.union(v.string(), v.null()),
+    fetchedAt: v.number(),
+    expiresAt: v.number(),
+  }).index("by_instrument_kind", ["instrumentId", "kind"]),
 
   // Fundamentals snapshot (optional Tapetide provider).
   fundamentals: defineTable({
@@ -566,4 +596,26 @@ export default defineSchema({
     .index("by_strategy", ["strategyId"])
     .index("by_user_created", ["userId", "createdAt"])
     .index("by_strategy_created", ["strategyId", "createdAt"]),
+
+  /**
+   * Official NSE MCP market-mover rankings.
+   *
+   * Deliberately independent of the user's quote-source preference: `key`
+   * contains the fixed provider (`nsemcp`), tool, universe and limit, so a
+   * TejHQ/NSE switch can never read another source's ranking. The normalized
+   * payload is stored as JSON so the UI shape can be re-derived without
+   * spending another provider request.
+   */
+  marketMoversCache: defineTable({
+    key: v.string(),
+    source: v.string(),
+    universe: v.string(),
+    segment: v.string(),
+    tool: v.string(),
+    sessionDate: v.union(v.string(), v.null()),
+    quoteTimestamp: nullableNumber,
+    payload: v.string(),
+    fetchedAt: v.number(),
+    expiresAt: v.number(),
+  }).index("by_key", ["key"]),
 });

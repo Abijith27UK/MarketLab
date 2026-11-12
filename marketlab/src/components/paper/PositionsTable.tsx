@@ -1,4 +1,5 @@
 import React from "react";
+import { ArrowUpRight } from "lucide-react";
 import DataModeBadge from "@/components/market/DataModeBadge";
 import type { PaperPosition } from "@/lib/paperTypes";
 import { formatInr, formatPercent, formatPrice, formatSignedInr, toneClass } from "@/lib/format";
@@ -7,76 +8,108 @@ interface PositionsTableProps {
   positions: PaperPosition[];
   onOpenInstrument?: (instrumentId: string) => void;
   emptyMessage?: string;
+  emptyAction?: React.ReactNode;
 }
 
-/** Open paper positions with the valuation price and its freshness label. */
+/**
+ * Open paper positions with the valuation price and its freshness label.
+ * Numbers are right-aligned and tabular so quantity, cost, value and P&L line
+ * up down the column.
+ */
 export const PositionsTable: React.FC<PositionsTableProps> = ({
   positions,
   onOpenInstrument,
-  emptyMessage = "No open positions yet. Filled buys appear here.",
+  emptyMessage = "Filled buys appear here with their average cost and live valuation.",
+  emptyAction,
 }) => {
   if (positions.length === 0) {
     return (
-      <p className="ml-empty" data-testid="positions-empty">
-        {emptyMessage}
-      </p>
+      <div className="ml-empty-block" data-testid="positions-empty">
+        <p className="ml-empty-block__title">No holdings yet</p>
+        <p className="ml-empty-block__body">{emptyMessage}</p>
+        {emptyAction}
+      </div>
     );
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="ml-table" data-testid="positions-table">
+    <div className="ml-table-scroll">
+      <table className="ml-data-table" data-testid="positions-table">
         <thead>
           <tr>
-            <th>Instrument</th>
-            <th className="is-right">Qty</th>
-            <th className="is-right">Avg cost</th>
-            <th className="is-right">Price</th>
-            <th className="is-right">Value</th>
-            <th className="is-right">P&amp;L</th>
+            <th scope="col">Instrument</th>
+            <th scope="col" className="is-right">
+              Qty
+            </th>
+            <th scope="col" className="is-right">
+              Avg cost
+            </th>
+            <th scope="col" className="is-right">
+              Current price
+            </th>
+            <th scope="col" className="is-right">
+              Market value
+            </th>
+            <th scope="col" className="is-right">
+              P&amp;L
+            </th>
+            <th scope="col">
+              <span className="sr-only">Details</span>
+            </th>
           </tr>
         </thead>
         <tbody>
           {positions.map((position) => (
             <tr key={position.instrumentId} data-instrument-id={position.instrumentId}>
               <td>
-                <div className="flex flex-col">
+                <span className="ml-data-table__instrument">
                   {onOpenInstrument ? (
                     <button
                       type="button"
-                      className="ml-position-link"
+                      className="ml-data-table__symbol"
                       onClick={() => onOpenInstrument(position.instrumentId)}
                     >
                       {position.symbol}
                     </button>
                   ) : (
-                    <span className="text-gray-200">{position.symbol}</span>
+                    <span className="ml-data-table__symbol">{position.symbol}</span>
                   )}
-                  <span className="text-xs text-gray-500">
-                    {position.exchange} · {position.name || position.instrumentType}
+                  <span className="ml-data-table__name" title={position.name}>
+                    {position.name || position.instrumentType}
                   </span>
-                </div>
-              </td>
-              <td className="is-right ml-mono">{position.quantity}</td>
-              <td className="is-right ml-mono">{formatPrice(position.averageCost)}</td>
-              <td className="is-right ml-mono">
-                <span className="flex flex-col items-end gap-1">
-                  <span className="flex items-center justify-end gap-1.5">
-                    {formatPrice(position.price)}
-                    <DataModeBadge mode={position.mode} source={position.source} />
-                  </span>
-                  {position.eod && position.quoteTime ? (
-                    <span className="text-[11px] font-normal text-gray-500">
-                      EOD close · {new Date(position.quoteTime).toLocaleDateString("en-IN")} ·
-                      valuation only
-                    </span>
-                  ) : null}
                 </span>
               </td>
-              <td className="is-right ml-mono">{formatInr(position.marketValue)}</td>
-              <td className={`is-right ml-mono ${toneClass(position.unrealizedPnl)}`}>
-                <span className="block">{formatSignedInr(position.unrealizedPnl)}</span>
-                <span className="text-xs">{formatPercent(position.unrealizedPercent)}</span>
+              <td className="is-right is-num">{position.quantity}</td>
+              <td className="is-right is-num">{formatPrice(position.averageCost)}</td>
+              <td className="is-right">
+                <span className="flex flex-col items-end gap-1">
+                  <span className="is-num">{formatPrice(position.price)}</span>
+                  <span className="flex items-center gap-1.5">
+                    <DataModeBadge mode={position.mode} source={position.source} />
+                    {position.eod && position.quoteTime ? (
+                      <span className="text-[10px] text-[var(--text-3)]">
+                        EOD {new Date(position.quoteTime).toLocaleDateString("en-IN")}
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+              </td>
+              <td className="is-right is-num">{formatInr(position.marketValue)}</td>
+              <td className={`is-right is-num ${toneClass(position.unrealizedPnl)}`}>
+                <span className="block font-medium">{formatSignedInr(position.unrealizedPnl)}</span>
+                <span className="block text-[10px]">{formatPercent(position.unrealizedPercent)}</span>
+              </td>
+              <td className="is-right">
+                {onOpenInstrument && (
+                  <button
+                    type="button"
+                    className="ml-data-table__action"
+                    onClick={() => onOpenInstrument(position.instrumentId)}
+                    aria-label={`Open ${position.symbol} details`}
+                  >
+                    <ArrowUpRight size={13} aria-hidden="true" />
+                  </button>
+                )}
               </td>
             </tr>
           ))}

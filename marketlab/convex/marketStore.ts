@@ -6,6 +6,10 @@ import type { NormalizedCandle, NormalizedInstrument, NormalizedQuote } from "./
 import { consumeRate, consumeDailyQuota, windowStartFor, WINDOW_MS } from "./market/rateLimit";
 import { istDateString, istDateToUtcMs } from "./market/time";
 import { isEndOfDaySource } from "./market/provenance";
+import {
+  DASHBOARD_INDEX_DEFINITIONS,
+  indexDefinitionToInstrument,
+} from "./market/indexCatalogue";
 
 const dataModeValidator = v.union(
   v.literal("LIVE"),
@@ -78,6 +82,88 @@ export const instrumentsByIds = internalQuery({
   },
 });
 
+/**
+ * Creates the small, verified dashboard index catalogue (6 rows).
+ *
+ * Indices are reference data, not equities: they are not in the bhavcopy
+ * instrument master, so without this the dashboard has nothing to quote. It is
+ * idempotent, preserves an existing row's `_id`, and never deletes anything.
+ */
+export const ensureIndexInstruments = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    let inserted = 0;
+    let updated = 0;
+
+    for (const definition of DASHBOARD_INDEX_DEFINITIONS) {
+      const instrument = indexDefinitionToInstrument(definition);
+      const existing = await ctx.db
+        .query("instruments")
+        .withIndex("by_instrument_id", (q) => q.eq("instrumentId", instrument.instrumentId))
+        .first();
+
+      if (existing) {
+        const patch: Partial<Doc<"instruments">> = {};
+        if (existing.instrumentType !== "INDEX") patch.instrumentType = "INDEX";
+        if (existing.providerIds?.nsemcp !== definition.nseName) {
+          patch.providerIds = { ...(existing.providerIds ?? {}), nsemcp: definition.nseName };
+        }
+        if (existing.isSampleData) {
+          patch.isSampleData = false;
+          patch.dataSource = "nsemcp";
+        }
+        if (Object.keys(patch).length > 0) {
+          await ctx.db.patch(existing._id, patch);
+          updated += 1;
+        }
+        continue;
+      }
+
+      await ctx.db.insert("instruments", {
+        symbol: instrument.symbol,
+        name: instrument.name,
+        exchange: instrument.exchange,
+        instrumentType: instrument.instrumentType,
+        sector: "Index",
+        dataSource: "nsemcp",
+        isSampleData: false,
+        lastUpdated: now,
+        instrumentId: instrument.instrumentId,
+        tradingSymbol: instrument.tradingSymbol,
+        segment: instrument.segment,
+        isActive: true,
+        providerIds: instrument.providerIds,
+      });
+      inserted += 1;
+    }
+
+    return { inserted, updated };
+  },
+});
+
+/** Catalogue rows for the symbols a market ranking returned, for name resolution. */
+export const instrumentsBySymbols = internalQuery({
+  args: { symbols: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const rows: Doc<"instruments">[] = [];
+    for (const symbol of args.symbols) {
+      const matches = await ctx.db
+        .query("instruments")
+        .withIndex("by_exchange_symbol", (q) =>
+          q.eq("exchange", "NSE").eq("symbol", symbol)
+        )
+        .collect();
+      const match =
+        matches.find((row) => row.instrumentType === "EQUITY") ??
+        matches.find((row) => row.instrumentType === "ETF") ??
+        matches[0];
+      if (match) rows.push(match);
+    }
+    return rows;
+  },
+});
+
 export const upsertInstrumentMaster = internalMutation({
   args: {
     instruments: v.array(
@@ -99,6 +185,7 @@ export const upsertInstrumentMaster = internalMutation({
           breeze: v.optional(v.string()),
           tapetide: v.optional(v.string()),
           tejhq: v.optional(v.string()),
+          nsemcp: v.optional(v.string()),
         }),
         isin: v.union(v.string(), v.null()),
         tickSize: v.union(v.number(), v.null()),
@@ -459,17 +546,51 @@ export const screenerCandidates = internalQuery({
 });
 
 export const quotesByInstrumentIds = internalQuery({
-  args: { ids: v.array(v.string()) },
+  args: { ids: v.array(v.string()), source: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const quotes: Doc<"marketQuotes">[] = [];
+    // Calculations (paper fills, alerts, screener) read TejHQ only: an
+    // experimental provider must never price an order. Quote views pass the
+    // provider they selected explicitly.
+    const source = args.source ?? "tejhq";
     for (const instrumentId of args.ids) {
       const quote = await ctx.db
         .query("marketQuotes")
-        .withIndex("by_instrument", (q) => q.eq("instrumentId", instrumentId))
+        .withIndex("by_instrument_source", (q) =>
+          q.eq("instrumentId", instrumentId).eq("source", source)
+        )
         .first();
       if (quote) quotes.push(quote);
     }
     return quotes;
+  },
+});
+
+/** The signed-in user's chosen informational quote source, or null. */
+export const preferredQuoteProvider = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const profile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    return profile?.quoteProvider ?? null;
+  },
+});
+
+/** The signed-in user's chosen chart-history source, or null (TejHQ default). */
+export const preferredChartSource = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const profile = await ctx.db
+      .query("userProfiles")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    return profile?.chartSource ?? null;
   },
 });
 
@@ -478,8 +599,17 @@ export const recentQuotes = internalQuery({
   args: { limit: v.number() },
   handler: async (ctx, args) => {
     const quotes = await ctx.db.query("marketQuotes").collect();
-    return quotes
-      .filter((quote) => quote.source !== "sample")
+    // Multiple providers may cache the same instrument; keep the freshest row
+    // per instrument so a mover never appears twice.
+    const newest = new Map<string, Doc<"marketQuotes">>();
+    for (const quote of quotes) {
+      if (quote.source === "sample") continue;
+      const existing = newest.get(quote.instrumentId);
+      if (!existing || (quote.quoteTime ?? 0) > (existing.quoteTime ?? 0)) {
+        newest.set(quote.instrumentId, quote);
+      }
+    }
+    return [...newest.values()]
       .sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0))
       .slice(0, args.limit);
   },
@@ -511,9 +641,13 @@ export const upsertQuotes = internalMutation({
   },
   handler: async (ctx, args) => {
     for (const quote of args.quotes) {
+      // One cache row per (instrument, provider), so switching sources can never
+      // surface another provider's price under the new provider's name.
       const existing = await ctx.db
         .query("marketQuotes")
-        .withIndex("by_instrument", (q) => q.eq("instrumentId", quote.instrumentId))
+        .withIndex("by_instrument_source", (q) =>
+          q.eq("instrumentId", quote.instrumentId).eq("source", quote.source)
+        )
         .first();
       const record = { ...quote, fetchedAt: args.fetchedAt };
       if (existing) await ctx.db.patch(existing._id, record);
@@ -651,6 +785,8 @@ export const latestDataset = internalQuery({
     fromMs: v.number(),
     toMs: v.number(),
     limit: v.number(),
+    /** Restrict provider caches to one source; imports are always eligible. */
+    source: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -668,6 +804,8 @@ export const latestDataset = internalQuery({
           dataset.kind === "cache" ||
           (dataset.kind === "import" && dataset.ownerId === args.ownerId)
       )
+      // A TejHQ cache must never be served as if it came from NSE Bhavcopy.
+      .filter((dataset) => dataset.kind === "import" || !args.source || dataset.source === args.source)
       .sort((a, b) => b.updatedAt - a.updatedAt);
 
     const dataset = usable[0];
